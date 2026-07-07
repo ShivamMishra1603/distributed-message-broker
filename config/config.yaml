@@ -1,0 +1,10 @@
+broker:
+  grpc_address: "localhost:50051"
+  graceful_shutdown_timeout: "15s"
+
+storage:
+  data_directory: "./data"
+
+observability:
+  log_level: "info"
+  log_format: "json"
