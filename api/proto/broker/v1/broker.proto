@@ -1,0 +1,129 @@
+syntax = "proto3";
+package broker.v1;
+option go_package = "github.com/ShivamMishra1603/distributed-message-broker/gen/proto/broker/v1;brokerpb";
+
+// --- Shared types ---
+
+message Header {
+  string key   = 1;
+  bytes  value = 2;
+}
+
+message Record {
+  bytes           key       = 1;
+  bytes           value     = 2;
+  repeated Header headers   = 3;
+  int64           timestamp = 4;
+}
+
+message StoredRecord {
+  uint64          offset    = 1;
+  int64           timestamp = 2;
+  bytes           key       = 3;
+  bytes           value     = 4;
+  repeated Header headers   = 5;
+}
+
+message RetentionPolicy {
+  uint64 max_age_seconds = 1;
+  uint64 max_bytes       = 2;
+}
+
+message TopicMetadata {
+  string                    name            = 1;
+  uint32                    partition_count = 2;
+  repeated PartitionMetadata partitions     = 3;
+  RetentionPolicy           retention       = 4;
+}
+
+message PartitionMetadata {
+  uint32 partition_id     = 1;
+  uint64 earliest_offset  = 2;
+  uint64 log_end_offset   = 3;
+}
+
+// --- AdminService ---
+
+service AdminService {
+  rpc CreateTopic(CreateTopicRequest)     returns (CreateTopicResponse);
+  rpc ListTopics(ListTopicsRequest)       returns (ListTopicsResponse);
+  rpc DescribeTopic(DescribeTopicRequest) returns (DescribeTopicResponse);
+}
+
+message CreateTopicRequest {
+  string          name            = 1;
+  uint32          partition_count = 2;
+  RetentionPolicy retention       = 3;
+}
+
+message CreateTopicResponse {
+  TopicMetadata topic = 1;
+}
+
+message ListTopicsRequest {}
+
+message ListTopicsResponse {
+  repeated TopicMetadata topics = 1;
+}
+
+message DescribeTopicRequest {
+  string name = 1;
+}
+
+message DescribeTopicResponse {
+  TopicMetadata topic = 1;
+}
+
+// --- BrokerService ---
+
+service BrokerService {
+  rpc Produce(ProduceRequest)                         returns (ProduceResponse);
+  rpc Fetch(FetchRequest)                             returns (FetchResponse);
+  rpc CommitOffset(CommitOffsetRequest)                returns (CommitOffsetResponse);
+  rpc FetchCommittedOffset(FetchCommittedOffsetRequest) returns (FetchCommittedOffsetResponse);
+}
+
+message ProduceRequest {
+  string          topic     = 1;
+  uint32          partition = 2;
+  repeated Record records   = 3;
+}
+
+message ProduceResponse {
+  uint64 base_offset   = 1;
+  uint64 last_offset   = 2;
+  uint32 record_count  = 3;
+}
+
+message FetchRequest {
+  string topic     = 1;
+  uint32 partition = 2;
+  uint64 offset    = 3;
+  uint32 max_bytes = 4;
+}
+
+message FetchResponse {
+  repeated StoredRecord records         = 1;
+  uint64                earliest_offset = 2;
+  uint64                log_end_offset  = 3;
+}
+
+message CommitOffsetRequest {
+  string consumer_group = 1;
+  string topic          = 2;
+  uint32 partition      = 3;
+  uint64 next_offset    = 4;
+}
+
+message CommitOffsetResponse {}
+
+message FetchCommittedOffsetRequest {
+  string consumer_group = 1;
+  string topic          = 2;
+  uint32 partition      = 3;
+}
+
+message FetchCommittedOffsetResponse {
+  bool   found       = 1;
+  uint64 next_offset = 2;
+}

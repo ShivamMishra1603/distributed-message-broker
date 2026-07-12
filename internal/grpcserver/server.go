@@ -7,6 +7,7 @@ import (
 	"net"
 	"sync"
 
+	brokerpb "github.com/ShivamMishra1603/distributed-message-broker/gen/proto/broker/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -21,15 +22,28 @@ type Server struct {
 	mu           sync.Mutex
 }
 
-// New constructs a Server wrapper and registers the standard gRPC Health service.
-func New(address string, logger *slog.Logger) *Server {
-	grpcServer := grpc.NewServer()
+// New constructs a Server wrapper and registers the Admin, Broker, and Health services.
+func New(
+	address string,
+	logger *slog.Logger,
+	admin brokerpb.AdminServiceServer,
+	broker brokerpb.BrokerServiceServer,
+	maxMsgSize int,
+) *Server {
+	grpcServer := grpc.NewServer(
+		grpc.MaxRecvMsgSize(maxMsgSize),
+		grpc.MaxSendMsgSize(maxMsgSize),
+	)
 	healthServer := health.NewServer()
 
 	healthpb.RegisterHealthServer(grpcServer, healthServer)
+	brokerpb.RegisterAdminServiceServer(grpcServer, admin)
+	brokerpb.RegisterBrokerServiceServer(grpcServer, broker)
 
-	// Initially, set overall server health to NOT_SERVING during setup
+	// Initially, set overall and service health to NOT_SERVING during setup
 	healthServer.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
+	healthServer.SetServingStatus("broker.v1.AdminService", healthpb.HealthCheckResponse_NOT_SERVING)
+	healthServer.SetServingStatus("broker.v1.BrokerService", healthpb.HealthCheckResponse_NOT_SERVING)
 
 	return &Server{
 		logger:       logger,
@@ -54,6 +68,8 @@ func (s *Server) Start() error {
 
 	// Mark status as SERVING now that the listener is active and we are about to serve
 	s.healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	s.healthServer.SetServingStatus("broker.v1.AdminService", healthpb.HealthCheckResponse_SERVING)
+	s.healthServer.SetServingStatus("broker.v1.BrokerService", healthpb.HealthCheckResponse_SERVING)
 
 	err = s.grpcServer.Serve(lis)
 
@@ -74,6 +90,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	// 1. Immediately mark health status as NOT_SERVING
 	s.healthServer.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
+	s.healthServer.SetServingStatus("broker.v1.AdminService", healthpb.HealthCheckResponse_NOT_SERVING)
+	s.healthServer.SetServingStatus("broker.v1.BrokerService", healthpb.HealthCheckResponse_NOT_SERVING)
 
 	// 2. Channel to monitor GracefulStop completion
 	done := make(chan struct{})

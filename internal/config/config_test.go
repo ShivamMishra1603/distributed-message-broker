@@ -19,6 +19,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Storage.DataDirectory != "./data" {
 		t.Errorf("expected default data dir ./data, got %q", cfg.Storage.DataDirectory)
 	}
+	if cfg.Storage.MaxRecordBytes != 1048576 {
+		t.Errorf("expected default max record bytes 1048576, got %d", cfg.Storage.MaxRecordBytes)
+	}
+	if cfg.Storage.MaxBatchBytes != 5242880 {
+		t.Errorf("expected default max batch bytes 5242880, got %d", cfg.Storage.MaxBatchBytes)
+	}
 	if cfg.Observability.LogLevel != "info" {
 		t.Errorf("expected default log level info, got %q", cfg.Observability.LogLevel)
 	}
@@ -37,6 +43,8 @@ broker:
   graceful_shutdown_timeout: "30s"
 storage:
   data_directory: "/tmp/broker-data"
+  max_record_bytes: 500000
+  max_batch_bytes: 2000000
 observability:
   log_level: "debug"
   log_format: "text"
@@ -59,6 +67,12 @@ observability:
 	if cfg.Storage.DataDirectory != "/tmp/broker-data" {
 		t.Errorf("expected data_directory to be '/tmp/broker-data', got %q", cfg.Storage.DataDirectory)
 	}
+	if cfg.Storage.MaxRecordBytes != 500000 {
+		t.Errorf("expected max_record_bytes to be 500000, got %d", cfg.Storage.MaxRecordBytes)
+	}
+	if cfg.Storage.MaxBatchBytes != 2000000 {
+		t.Errorf("expected max_batch_bytes to be 2000000, got %d", cfg.Storage.MaxBatchBytes)
+	}
 	if cfg.Observability.LogLevel != "debug" {
 		t.Errorf("expected log_level to be 'debug', got %q", cfg.Observability.LogLevel)
 	}
@@ -72,8 +86,8 @@ func TestLoad_MissingFileReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-existent config file, got nil")
 	}
-	if !strings.Contains(err.Error(), "failed to read config file") {
-		t.Errorf("expected read error, got: %v", err)
+	if !strings.Contains(err.Error(), "failed to open config file") {
+		t.Errorf("expected open error, got: %v", err)
 	}
 }
 
@@ -91,6 +105,8 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	t.Setenv("BROKER_GRPC_ADDRESS", "0.0.0.0:9092")
 	t.Setenv("BROKER_SHUTDOWN_TIMEOUT", "5s")
 	t.Setenv("BROKER_DATA_DIRECTORY", "/var/lib/broker")
+	t.Setenv("BROKER_MAX_RECORD_BYTES", "65536")
+	t.Setenv("BROKER_MAX_BATCH_BYTES", "262144")
 	t.Setenv("BROKER_LOG_LEVEL", "warn")
 	t.Setenv("BROKER_LOG_FORMAT", "json")
 
@@ -108,11 +124,39 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	if cfg.Storage.DataDirectory != "/var/lib/broker" {
 		t.Errorf("expected data directory override '/var/lib/broker', got %q", cfg.Storage.DataDirectory)
 	}
+	if cfg.Storage.MaxRecordBytes != 65536 {
+		t.Errorf("expected max record bytes override 65536, got %d", cfg.Storage.MaxRecordBytes)
+	}
+	if cfg.Storage.MaxBatchBytes != 262144 {
+		t.Errorf("expected max batch bytes override 262144, got %d", cfg.Storage.MaxBatchBytes)
+	}
 	if cfg.Observability.LogLevel != "warn" {
 		t.Errorf("expected log level override 'warn', got %q", cfg.Observability.LogLevel)
 	}
 	if cfg.Observability.LogFormat != "json" {
 		t.Errorf("expected log format override 'json', got %q", cfg.Observability.LogFormat)
+	}
+}
+
+func TestLoad_UnknownFieldsRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "invalid_config.yaml")
+
+	yamlContent := `
+broker:
+  grpc_address: "127.0.0.1:8080"
+unknown_root_field: "trigger_error"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write temp config file: %v", err)
+	}
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected error due to unknown fields, got nil")
+	}
+	if !strings.Contains(err.Error(), "field unknown_root_field not found") && !strings.Contains(err.Error(), "not found in type config.Config") {
+		t.Errorf("expected unknown field error, got: %v", err)
 	}
 }
 
@@ -168,6 +212,28 @@ storage:
 			wantErr: "storage.data_directory cannot be empty",
 		},
 		{
+			name: "zero max record bytes",
+			setup: func(path string) {
+				t.Setenv("BROKER_MAX_RECORD_BYTES", "0")
+			},
+			wantErr: "storage.max_record_bytes must be positive",
+		},
+		{
+			name: "negative max record bytes",
+			setup: func(path string) {
+				t.Setenv("BROKER_MAX_RECORD_BYTES", "-100")
+			},
+			wantErr: "storage.max_record_bytes must be positive",
+		},
+		{
+			name: "max batch bytes smaller than max record bytes",
+			setup: func(path string) {
+				t.Setenv("BROKER_MAX_RECORD_BYTES", "200")
+				t.Setenv("BROKER_MAX_BATCH_BYTES", "100")
+			},
+			wantErr: "cannot be less than storage.max_record_bytes",
+		},
+		{
 			name: "invalid log level",
 			setup: func(path string) {
 				t.Setenv("BROKER_LOG_LEVEL", "fatal")
@@ -186,7 +252,6 @@ storage:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			configPath := filepath.Join(tmpDir, tt.name+".yaml")
-			// Clear env variables that could interfere
 			os.Clearenv()
 
 			tt.setup(configPath)

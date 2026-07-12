@@ -16,7 +16,9 @@ type BrokerConfig struct {
 }
 
 type StorageConfig struct {
-	DataDirectory string `yaml:"data_directory"`
+	DataDirectory  string `yaml:"data_directory"`
+	MaxRecordBytes int    `yaml:"max_record_bytes"`
+	MaxBatchBytes  int    `yaml:"max_batch_bytes"`
 }
 
 type ObservabilityConfig struct {
@@ -38,7 +40,9 @@ func DefaultConfig() Config {
 			ShutdownTimeoutStr: "15s",
 		},
 		Storage: StorageConfig{
-			DataDirectory: "./data",
+			DataDirectory:  "./data",
+			MaxRecordBytes: 1048576, // 1 MiB
+			MaxBatchBytes:  5242880, // 5 MiB
 		},
 		Observability: ObservabilityConfig{
 			LogLevel:  "info",
@@ -53,11 +57,15 @@ func Load(path string) (Config, error) {
 
 	// 1. Read YAML file if path is specified
 	if path != "" {
-		data, err := os.ReadFile(path)
+		file, err := os.Open(path)
 		if err != nil {
-			return Config{}, fmt.Errorf("failed to read config file %q: %w", path, err)
+			return Config{}, fmt.Errorf("failed to open config file %q: %w", path, err)
 		}
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
+		defer file.Close()
+
+		dec := yaml.NewDecoder(file)
+		dec.KnownFields(true)
+		if err := dec.Decode(&cfg); err != nil {
 			return Config{}, fmt.Errorf("failed to parse yaml config: %w", err)
 		}
 	}
@@ -71,6 +79,18 @@ func Load(path string) (Config, error) {
 	}
 	if val := os.Getenv("BROKER_DATA_DIRECTORY"); val != "" {
 		cfg.Storage.DataDirectory = val
+	}
+	if val := os.Getenv("BROKER_MAX_RECORD_BYTES"); val != "" {
+		var bytesVal int
+		if _, err := fmt.Sscanf(val, "%d", &bytesVal); err == nil {
+			cfg.Storage.MaxRecordBytes = bytesVal
+		}
+	}
+	if val := os.Getenv("BROKER_MAX_BATCH_BYTES"); val != "" {
+		var bytesVal int
+		if _, err := fmt.Sscanf(val, "%d", &bytesVal); err == nil {
+			cfg.Storage.MaxBatchBytes = bytesVal
+		}
 	}
 	if val := os.Getenv("BROKER_LOG_LEVEL"); val != "" {
 		cfg.Observability.LogLevel = val
@@ -95,6 +115,13 @@ func Load(path string) (Config, error) {
 
 	if cfg.Storage.DataDirectory == "" {
 		return Config{}, fmt.Errorf("storage.data_directory cannot be empty")
+	}
+
+	if cfg.Storage.MaxRecordBytes <= 0 {
+		return Config{}, fmt.Errorf("storage.max_record_bytes must be positive, got %d", cfg.Storage.MaxRecordBytes)
+	}
+	if cfg.Storage.MaxBatchBytes < cfg.Storage.MaxRecordBytes {
+		return Config{}, fmt.Errorf("storage.max_batch_bytes (%d) cannot be less than storage.max_record_bytes (%d)", cfg.Storage.MaxBatchBytes, cfg.Storage.MaxRecordBytes)
 	}
 
 	logLevel := strings.ToLower(cfg.Observability.LogLevel)

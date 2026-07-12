@@ -8,8 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/ShivamMishra1603/distributed-message-broker/internal/broker"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/config"
-	"github.com/ShivamMishra1603/distributed-message-broker/internal/grpcserver"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/logger"
 )
 
@@ -45,17 +45,20 @@ func run() error {
 	}
 	log.Info("storage directory validated successfully", "directory", cfg.Storage.DataDirectory)
 
-	// 5. Initialize gRPC Server Wrapper
-	srv := grpcserver.New(cfg.Broker.GRPCAddress, log)
+	// 5. Initialize Broker Orchestrator
+	b, err := broker.New(cfg, log)
+	if err != nil {
+		return fmt.Errorf("failed to construct broker orchestrator: %w", err)
+	}
 
 	// 6. Listen for OS Signals
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
-	// Channel to capture gRPC server start failures
+	// Channel to capture broker orchestrator start failures
 	serverErrCh := make(chan error, 1)
 	go func() {
-		serverErrCh <- srv.Start()
+		serverErrCh <- b.Start()
 	}()
 
 	// Block on either a signal or server startup failure
@@ -74,7 +77,7 @@ func run() error {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.Broker.GracefulShutdownTimeout)
 		defer shutdownCancel()
 
-		if err := srv.Shutdown(shutdownCtx); err != nil {
+		if err := b.Shutdown(shutdownCtx); err != nil {
 			return fmt.Errorf("error during server shutdown: %w", err)
 		}
 

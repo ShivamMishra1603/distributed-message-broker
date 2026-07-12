@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ShivamMishra1603/distributed-message-broker/internal/config"
+	"github.com/ShivamMishra1603/distributed-message-broker/internal/topic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
@@ -15,8 +17,11 @@ import (
 
 func TestServer_LifecycleAndHealth(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mgr := topic.NewManager()
+	admin := NewAdminServer(logger, mgr)
+	broker := NewBrokerServer(logger, mgr, config.StorageConfig{MaxRecordBytes: 100, MaxBatchBytes: 500})
 
-	srv := New("127.0.0.1:0", logger)
+	srv := New("127.0.0.1:0", logger, admin, broker, 1024*1024)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -57,6 +62,15 @@ func TestServer_LifecycleAndHealth(t *testing.T) {
 		t.Errorf("expected general status to be SERVING, got %v", resp.Status)
 	}
 
+	// Query AdminService health
+	resp, err = client.Check(ctx, &healthpb.HealthCheckRequest{Service: "broker.v1.AdminService"})
+	if err != nil {
+		t.Fatalf("health check for AdminService failed: %v", err)
+	}
+	if resp.Status != healthpb.HealthCheckResponse_SERVING {
+		t.Errorf("expected AdminService status to be SERVING, got %v", resp.Status)
+	}
+
 	// Initiate graceful shutdown
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer shutdownCancel()
@@ -88,8 +102,11 @@ func TestServer_LifecycleAndHealth(t *testing.T) {
 
 func TestServer_ShutdownTimeoutReturnsError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mgr := topic.NewManager()
+	admin := NewAdminServer(logger, mgr)
+	broker := NewBrokerServer(logger, mgr, config.StorageConfig{MaxRecordBytes: 100, MaxBatchBytes: 500})
 
-	srv := New("127.0.0.1:0", logger)
+	srv := New("127.0.0.1:0", logger, admin, broker, 1024*1024)
 
 	go func() {
 		srv.Start()
@@ -116,6 +133,9 @@ func TestServer_ShutdownTimeoutReturnsError(t *testing.T) {
 
 func TestServer_BindError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mgr := topic.NewManager()
+	admin := NewAdminServer(logger, mgr)
+	broker := NewBrokerServer(logger, mgr, config.StorageConfig{MaxRecordBytes: 100, MaxBatchBytes: 500})
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -123,7 +143,7 @@ func TestServer_BindError(t *testing.T) {
 	}
 	defer lis.Close()
 
-	srv := New(lis.Addr().String(), logger)
+	srv := New(lis.Addr().String(), logger, admin, broker, 1024*1024)
 	err = srv.Start()
 	if err == nil {
 		t.Error("expected start to return bind error, got nil")

@@ -4,6 +4,8 @@ broker:
 
 storage:
   data_directory: "./data"
+  max_record_bytes: 1048576
+  max_batch_bytes: 5242880
 
 observability:
   log_level: "info"
