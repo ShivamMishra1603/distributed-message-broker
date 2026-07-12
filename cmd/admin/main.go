@@ -24,6 +24,9 @@ func main() {
 			if i+1 < len(os.Args) {
 				brokerAddr = os.Args[i+1]
 				i++ // skip value
+			} else {
+				fmt.Fprintln(os.Stderr, "Error: --broker flag requires a value")
+				os.Exit(1)
 			}
 		} else if !strings.HasPrefix(arg, "-") {
 			subcommandIdx = i
@@ -55,11 +58,22 @@ func main() {
 	case "create-topic":
 		var topicName string
 		var remainArgs []string
-		for _, arg := range subArgs {
-			if !strings.HasPrefix(arg, "-") && topicName == "" {
-				topicName = arg
-			} else {
+		for i := 0; i < len(subArgs); i++ {
+			arg := subArgs[i]
+			if arg == "-partitions" || arg == "--partitions" {
 				remainArgs = append(remainArgs, arg)
+				if i+1 < len(subArgs) {
+					remainArgs = append(remainArgs, subArgs[i+1])
+					i++
+				}
+			} else if strings.HasPrefix(arg, "-") {
+				remainArgs = append(remainArgs, arg)
+			} else {
+				if topicName == "" {
+					topicName = arg
+				} else {
+					remainArgs = append(remainArgs, arg)
+				}
 			}
 		}
 
