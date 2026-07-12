@@ -28,9 +28,8 @@ func New(address string, logger *slog.Logger) *Server {
 
 	healthpb.RegisterHealthServer(grpcServer, healthServer)
 
-	// Initially, set service state to NOT_SERVING during setup
+	// Initially, set overall server health to NOT_SERVING during setup
 	healthServer.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
-	healthServer.SetServingStatus("broker", healthpb.HealthCheckResponse_NOT_SERVING)
 
 	return &Server{
 		logger:       logger,
@@ -55,7 +54,6 @@ func (s *Server) Start() error {
 
 	// Mark status as SERVING now that the listener is active and we are about to serve
 	s.healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
-	s.healthServer.SetServingStatus("broker", healthpb.HealthCheckResponse_SERVING)
 
 	err = s.grpcServer.Serve(lis)
 
@@ -76,7 +74,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	// 1. Immediately mark health status as NOT_SERVING
 	s.healthServer.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
-	s.healthServer.SetServingStatus("broker", healthpb.HealthCheckResponse_NOT_SERVING)
 
 	// 2. Channel to monitor GracefulStop completion
 	done := make(chan struct{})
@@ -88,13 +85,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	select {
 	case <-done:
 		s.logger.Info("gRPC server stopped gracefully")
+		s.cleanup()
+		return nil
 	case <-ctx.Done():
 		s.logger.Warn("graceful shutdown timed out; forcing stop")
 		s.grpcServer.Stop()
+		s.cleanup()
+		return ctx.Err()
 	}
-
-	s.cleanup()
-	return nil
 }
 
 // GetAddress returns the actual address the server is listening to (useful for testing on dynamic ports like :0).

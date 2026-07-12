@@ -51,18 +51,14 @@ func DefaultConfig() Config {
 func Load(path string) (Config, error) {
 	cfg := DefaultConfig()
 
-	// 1. Read YAML file if path is specified and file exists
+	// 1. Read YAML file if path is specified
 	if path != "" {
-		if _, err := os.Stat(path); err == nil {
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return Config{}, fmt.Errorf("failed to read config file: %w", err)
-			}
-			if err := yaml.Unmarshal(data, &cfg); err != nil {
-				return Config{}, fmt.Errorf("failed to parse yaml config: %w", err)
-			}
-		} else if !os.IsNotExist(err) {
-			return Config{}, fmt.Errorf("error accessing config file: %w", err)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return Config{}, fmt.Errorf("failed to read config file %q: %w", path, err)
+		}
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return Config{}, fmt.Errorf("failed to parse yaml config: %w", err)
 		}
 	}
 

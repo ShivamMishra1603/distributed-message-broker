@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -66,14 +67,23 @@ observability:
 	}
 }
 
-func TestLoad_MissingFile(t *testing.T) {
-	// Loading from a missing file should not fail; it falls back to defaults.
-	cfg, err := Load("non_existent_file_path_1234.yaml")
+func TestLoad_MissingFileReturnsError(t *testing.T) {
+	_, err := Load("non_existent_file_path_1234.yaml")
+	if err == nil {
+		t.Fatal("expected error for non-existent config file, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to read config file") {
+		t.Errorf("expected read error, got: %v", err)
+	}
+}
+
+func TestLoad_EmptyPathUsesDefaults(t *testing.T) {
+	cfg, err := Load("")
 	if err != nil {
-		t.Fatalf("Load returned error for non-existent file: %v", err)
+		t.Fatalf("Load with empty path returned error: %v", err)
 	}
 	if cfg.Broker.GRPCAddress != "localhost:50051" {
-		t.Errorf("expected fallback to default address localhost:50051, got %q", cfg.Broker.GRPCAddress)
+		t.Errorf("expected default address localhost:50051, got %q", cfg.Broker.GRPCAddress)
 	}
 }
 
@@ -190,13 +200,9 @@ storage:
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
-			if !contains(err.Error(), tt.wantErr) {
+			if !strings.Contains(err.Error(), tt.wantErr) {
 				t.Errorf("expected error containing %q, got %q", tt.wantErr, err.Error())
 			}
 		})
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || s[0:len(substr)] == substr || len(s) > len(substr) && (s[0:len(substr)] == substr || contains(s[1:], substr)))
 }

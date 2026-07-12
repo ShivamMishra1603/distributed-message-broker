@@ -14,13 +14,10 @@ import (
 )
 
 func TestServer_LifecycleAndHealth(t *testing.T) {
-	// Create discarded logger to avoid output noise during tests
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	// Listen on ephemeral port
 	srv := New("127.0.0.1:0", logger)
 
-	// Start server in goroutine
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- srv.Start()
@@ -40,7 +37,6 @@ func TestServer_LifecycleAndHealth(t *testing.T) {
 		t.Fatal("failed to get ephemeral bind address")
 	}
 
-	// Connect to gRPC server using new gRPC patterns
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -52,25 +48,16 @@ func TestServer_LifecycleAndHealth(t *testing.T) {
 
 	client := healthpb.NewHealthClient(conn)
 
-	// 1. Query general health ("")
+	// Query overall health (empty service name)
 	resp, err := client.Check(ctx, &healthpb.HealthCheckRequest{Service: ""})
 	if err != nil {
-		t.Fatalf("health check check failed: %v", err)
+		t.Fatalf("health check failed: %v", err)
 	}
 	if resp.Status != healthpb.HealthCheckResponse_SERVING {
 		t.Errorf("expected general status to be SERVING, got %v", resp.Status)
 	}
 
-	// 2. Query broker specific health ("broker")
-	resp, err = client.Check(ctx, &healthpb.HealthCheckRequest{Service: "broker"})
-	if err != nil {
-		t.Fatalf("health check check failed: %v", err)
-	}
-	if resp.Status != healthpb.HealthCheckResponse_SERVING {
-		t.Errorf("expected broker status to be SERVING, got %v", resp.Status)
-	}
-
-	// 3. Initiate Shutdown
+	// Initiate graceful shutdown
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer shutdownCancel()
 
@@ -99,10 +86,37 @@ func TestServer_LifecycleAndHealth(t *testing.T) {
 	}
 }
 
+func TestServer_ShutdownTimeoutReturnsError(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	srv := New("127.0.0.1:0", logger)
+
+	go func() {
+		srv.Start()
+	}()
+
+	// Wait for listener to bind
+	for i := 0; i < 50; i++ {
+		addr := srv.GetAddress()
+		if addr != "127.0.0.1:0" && addr != "" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Use an already-cancelled context to force immediate timeout
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := srv.Shutdown(ctx)
+	if err == nil {
+		t.Error("expected error from timed-out shutdown, got nil")
+	}
+}
+
 func TestServer_BindError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	// Create listener to conflict on the port
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to bind test listener: %v", err)
