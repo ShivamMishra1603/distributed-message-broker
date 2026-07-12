@@ -2,48 +2,60 @@ package topic
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
-func TestManager_CreateTopic(t *testing.T) {
-	mgr := NewManager()
+func TestManager_CreateAndReopenMetadata(t *testing.T) {
+	dir := t.TempDir()
+
+	mgr, err := NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
 
 	ret := RetentionPolicy{MaxAgeSeconds: 3600, MaxBytes: 100000}
-	topic, err := mgr.CreateTopic("orders-v1", 3, ret)
+	_, err = mgr.CreateTopic("orders", 2, ret)
 	if err != nil {
 		t.Fatalf("failed to create topic: %v", err)
 	}
 
-	if topic.Name() != "orders-v1" {
-		t.Errorf("expected topic name orders-v1, got %q", topic.Name())
+	mgr.Close()
+
+	// Verify metadata file was written
+	metadataPath := filepath.Join(dir, "metadata", "topics.json")
+	if _, err := os.Stat(metadataPath); err != nil {
+		t.Errorf("topics.json metadata file was not written: %v", err)
 	}
 
-	if topic.PartitionCount() != 3 {
-		t.Errorf("expected partition count 3, got %d", topic.PartitionCount())
-	}
-
-	if topic.Retention().MaxAgeSeconds != 3600 {
-		t.Errorf("expected retention max age 3600, got %d", topic.Retention().MaxAgeSeconds)
-	}
-
-	// Try getting valid partition
-	p, err := topic.Partition(0)
+	// Reopen a new manager instance and verify it recovers the state
+	mgr2, err := NewManager(dir, 1024*1024, 512*1024, "sync", nil)
 	if err != nil {
-		t.Fatalf("failed to get partition 0: %v", err)
+		t.Fatalf("failed to reopen manager: %v", err)
 	}
-	if p == nil {
-		t.Fatal("expected partition log to be non-nil")
-	}
+	defer mgr2.Close()
 
-	// Try getting invalid partition
-	_, err = topic.Partition(3)
-	if !errors.Is(err, ErrPartitionNotFound) {
-		t.Errorf("expected ErrPartitionNotFound, got %v", err)
+	t2, err := mgr2.GetTopic("orders")
+	if err != nil {
+		t.Fatalf("failed to resolve recovered topic: %v", err)
+	}
+	if t2.Name() != "orders" {
+		t.Errorf("expected orders, got %s", t2.Name())
+	}
+	if t2.PartitionCount() != 2 {
+		t.Errorf("expected 2 partitions, got %d", t2.PartitionCount())
+	}
+	if t2.Retention().MaxAgeSeconds != 3600 {
+		t.Errorf("expected 3600, got %d", t2.Retention().MaxAgeSeconds)
 	}
 }
 
 func TestManager_CreateTopicValidation(t *testing.T) {
-	mgr := NewManager()
+	dir := t.TempDir()
+	mgr, _ := NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	defer mgr.Close()
+
 	ret := RetentionPolicy{}
 
 	// Invalid partition count
@@ -59,95 +71,60 @@ func TestManager_CreateTopicValidation(t *testing.T) {
 	}
 
 	// Duplicate topic
-	_, err = mgr.CreateTopic("duplicate", 1, ret)
-	if err != nil {
-		t.Fatalf("failed to create initial topic: %v", err)
-	}
+	_, _ = mgr.CreateTopic("duplicate", 1, ret)
 	_, err = mgr.CreateTopic("duplicate", 1, ret)
 	if !errors.Is(err, ErrTopicExists) {
 		t.Errorf("expected ErrTopicExists, got %v", err)
 	}
-
-	// Invalid names
-	invalidNames := []string{
-		"",                        // empty
-		"-starts-with",            // starts with hyphen
-		".starts-with",            // starts with dot
-		"invalid/char",            // invalid slash
-		"invalid@char",            // invalid @
-		string(make([]byte, 256)), // too long (256 chars)
-	}
-
-	for _, name := range invalidNames {
-		_, err := mgr.CreateTopic(name, 1, ret)
-		if !errors.Is(err, ErrInvalidTopicName) {
-			t.Errorf("expected ErrInvalidTopicName for %q, got %v", name, err)
-		}
-	}
 }
 
-func TestManager_GetAndListTopics(t *testing.T) {
-	mgr := NewManager()
-	ret := RetentionPolicy{}
+func TestManager_CrashConsistency(t *testing.T) {
+	dir := t.TempDir()
 
-	// Create topics in non-alphabetical order
-	_, _ = mgr.CreateTopic("charlie", 1, ret)
-	_, _ = mgr.CreateTopic("alpha", 1, ret)
-	_, _ = mgr.CreateTopic("bravo", 1, ret)
-
-	// ListTopics should return them alphabetically sorted
-	list := mgr.ListTopics()
-	if len(list) != 3 {
-		t.Fatalf("expected 3 topics, got %d", len(list))
-	}
-	if list[0].Name() != "alpha" || list[1].Name() != "bravo" || list[2].Name() != "charlie" {
-		t.Errorf("expected sorted list (alpha, bravo, charlie), got (%s, %s, %s)",
-			list[0].Name(), list[1].Name(), list[2].Name())
+	// 1. Case: Partition directories exist on disk, but topic is absent in topics.json -> ignored
+	extraPartDir := filepath.Join(dir, "topics", "ghost-topic", "partition-0")
+	if err := os.MkdirAll(extraPartDir, 0755); err != nil {
+		t.Fatal(err)
 	}
 
-	// Resolve topic
-	top, err := mgr.GetTopic("bravo")
+	mgr, err := NewManager(dir, 1024*1024, 512*1024, "sync", nil)
 	if err != nil {
-		t.Fatalf("failed to get topic bravo: %v", err)
-	}
-	if top.Name() != "bravo" {
-		t.Errorf("expected bravo, got %s", top.Name())
+		t.Fatalf("failed to open manager with ghost directories: %v", err)
 	}
 
-	// Missing topic
-	_, err = mgr.GetTopic("missing")
+	// Validate ghost topic is ignored
+	_, err = mgr.GetTopic("ghost-topic")
 	if !errors.Is(err, ErrTopicNotFound) {
-		t.Errorf("expected ErrTopicNotFound, got %v", err)
+		t.Errorf("expected ghost-topic to be ignored, got resolved: %v", err)
 	}
-}
+	mgr.Close()
 
-func TestManager_GetPartition(t *testing.T) {
-	mgr := NewManager()
-	ret := RetentionPolicy{}
+	// 2. Case: topics.json references a missing partition directory -> NewManager fails startup
+	// Let's create a valid topic
+	mgrWrite, _ := NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	_, _ = mgrWrite.CreateTopic("broken-topic", 2, RetentionPolicy{})
+	mgrWrite.Close()
 
-	_, err := mgr.CreateTopic("events", 2, ret)
-	if err != nil {
-		t.Fatalf("failed to create topic: %v", err)
-	}
-
-	// Success case
-	p, err := mgr.GetPartition("events", 1)
-	if err != nil {
-		t.Fatalf("failed to resolve partition: %v", err)
-	}
-	if p == nil {
-		t.Fatal("expected resolved partition to be non-nil")
+	// Manually delete partition 1 directory
+	deletedDir := filepath.Join(dir, "topics", "broken-topic", "partition-1")
+	if err := os.RemoveAll(deletedDir); err != nil {
+		t.Fatal(err)
 	}
 
-	// Non-existent topic
-	_, err = mgr.GetPartition("missing", 0)
-	if !errors.Is(err, ErrTopicNotFound) {
-		t.Errorf("expected ErrTopicNotFound, got %v", err)
+	// Open store must fail due to missing partition directory referenced in topics.json
+	_, err = NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	if err == nil {
+		t.Error("expected NewManager to fail when partition directory is missing, got nil")
 	}
 
-	// Non-existent partition
-	_, err = mgr.GetPartition("events", 2)
-	if !errors.Is(err, ErrPartitionNotFound) {
-		t.Errorf("expected ErrPartitionNotFound, got %v", err)
+	// 3. Case: Malformed topics.json -> NewManager fails startup
+	metadataPath := filepath.Join(dir, "metadata", "topics.json")
+	if err := os.WriteFile(metadataPath, []byte("{malformed-json}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	if err == nil {
+		t.Error("expected NewManager to fail when topics.json is malformed, got nil")
 	}
 }

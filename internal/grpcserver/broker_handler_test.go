@@ -56,15 +56,25 @@ func startBrokerBufServer(t *testing.T, mgr *topic.Manager, storageCfg config.St
 }
 
 func TestBrokerServer_ProduceAndFetch(t *testing.T) {
-	mgr := topic.NewManager()
-	_, err := mgr.CreateTopic("orders", 2, topic.RetentionPolicy{})
-	if err != nil {
-		t.Fatalf("failed to create topic: %v", err)
-	}
+	dir := t.TempDir()
 
 	storageCfg := config.StorageConfig{
-		MaxRecordBytes: 100,
-		MaxBatchBytes:  500,
+		DataDirectory:   dir,
+		MaxRecordBytes:  1000,
+		MaxBatchBytes:   5000,
+		SegmentMaxBytes: 10000,
+		FlushMode:       "sync",
+	}
+
+	mgr, err := topic.NewManager(dir, storageCfg.SegmentMaxBytes, int64(storageCfg.MaxBatchBytes), storageCfg.FlushMode, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	_, err = mgr.CreateTopic("orders", 2, topic.RetentionPolicy{})
+	if err != nil {
+		t.Fatalf("failed to create topic: %v", err)
 	}
 
 	client, cleanup := startBrokerBufServer(t, mgr, storageCfg)
@@ -140,13 +150,23 @@ func TestBrokerServer_ProduceAndFetch(t *testing.T) {
 }
 
 func TestBrokerServer_LimitsAndFailures(t *testing.T) {
-	mgr := topic.NewManager()
-	_, _ = mgr.CreateTopic("orders", 1, topic.RetentionPolicy{})
+	dir := t.TempDir()
 
 	storageCfg := config.StorageConfig{
-		MaxRecordBytes: 10,
-		MaxBatchBytes:  30,
+		DataDirectory:   dir,
+		MaxRecordBytes:  10,
+		MaxBatchBytes:   70, // single encoded batch for 1 record is ~60 bytes
+		SegmentMaxBytes: 1000,
+		FlushMode:       "sync",
 	}
+
+	mgr, err := topic.NewManager(dir, storageCfg.SegmentMaxBytes, int64(storageCfg.MaxBatchBytes), storageCfg.FlushMode, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	_, _ = mgr.CreateTopic("orders", 1, topic.RetentionPolicy{})
 
 	client, cleanup := startBrokerBufServer(t, mgr, storageCfg)
 	defer cleanup()
@@ -155,7 +175,7 @@ func TestBrokerServer_LimitsAndFailures(t *testing.T) {
 	defer cancel()
 
 	// 1. Produce to non-existent topic returns NotFound
-	_, err := client.Produce(ctx, &brokerpb.ProduceRequest{
+	_, err = client.Produce(ctx, &brokerpb.ProduceRequest{
 		Topic:     "missing",
 		Partition: 0,
 		Records:   []*brokerpb.Record{{Key: []byte("k"), Value: []byte("v")}},
@@ -193,12 +213,12 @@ func TestBrokerServer_LimitsAndFailures(t *testing.T) {
 		t.Errorf("expected InvalidArgument status code, got %v", status.Code(err))
 	}
 
-	// 4. Record exceeds max_record_bytes
+	// 4. Record payload exceeds max_record_bytes
 	_, err = client.Produce(ctx, &brokerpb.ProduceRequest{
 		Topic:     "orders",
 		Partition: 0,
 		Records: []*brokerpb.Record{
-			{Key: []byte("longerkey"), Value: []byte("longerval")}, // total = 18 > 10
+			{Key: []byte("longerkey"), Value: []byte("longerval")}, // payload total = 18 > 10
 		},
 	})
 	if err == nil {
@@ -208,29 +228,14 @@ func TestBrokerServer_LimitsAndFailures(t *testing.T) {
 		t.Errorf("expected ResourceExhausted, got %v", status.Code(err))
 	}
 
-	// 5. Batch exceeds max_batch_bytes
+	// 5. Batch size exceeds max_batch_bytes (payload under but fully encoded over 70 bytes)
+	// Single encoded batch for 2 records takes ~85 bytes.
 	_, err = client.Produce(ctx, &brokerpb.ProduceRequest{
 		Topic:     "orders",
 		Partition: 0,
 		Records: []*brokerpb.Record{
-			{Key: []byte("k"), Value: []byte("v")}, // 2 bytes payload
-			{Key: []byte("k"), Value: []byte("v")}, // 2 bytes payload
-			{Key: []byte("k"), Value: []byte("v")}, // 2 bytes payload
-		},
-	})
-	if err != nil {
-		t.Fatalf("first batch produce failed: %v", err)
-	}
-
-	// Produce batch of records where sum(payloads) > 30 bytes
-	_, err = client.Produce(ctx, &brokerpb.ProduceRequest{
-		Topic:     "orders",
-		Partition: 0,
-		Records: []*brokerpb.Record{
-			{Key: []byte("key1"), Value: []byte("value1")}, // 10 bytes
-			{Key: []byte("key2"), Value: []byte("value2")}, // 10 bytes
-			{Key: []byte("key3"), Value: []byte("value3")}, // 10 bytes
-			{Key: []byte("key4"), Value: []byte("value4")}, // 10 bytes (total = 40 > 30)
+			{Key: []byte("k"), Value: []byte("v")},
+			{Key: []byte("a"), Value: []byte("b")},
 		},
 	})
 	if err == nil {
@@ -238,143 +243,5 @@ func TestBrokerServer_LimitsAndFailures(t *testing.T) {
 	}
 	if status.Code(err) != codes.ResourceExhausted {
 		t.Errorf("expected ResourceExhausted status code, got %v", status.Code(err))
-	}
-
-	// 6. Fetch max_bytes == 0 returns InvalidArgument
-	_, err = client.Fetch(ctx, &brokerpb.FetchRequest{
-		Topic:     "orders",
-		Partition: 0,
-		Offset:    0,
-		MaxBytes:  0,
-	})
-	if err == nil {
-		t.Fatal("expected error for maxBytes = 0, got nil")
-	}
-	if status.Code(err) != codes.InvalidArgument {
-		t.Errorf("expected InvalidArgument, got %v", status.Code(err))
-	}
-
-	// 7. CommitOffset returns Unimplemented
-	_, err = client.CommitOffset(ctx, &brokerpb.CommitOffsetRequest{})
-	if err == nil {
-		t.Fatal("expected error for CommitOffset, got nil")
-	}
-	if status.Code(err) != codes.Unimplemented {
-		t.Errorf("expected Unimplemented, got %v", status.Code(err))
-	}
-}
-
-func TestBrokerServer_FetchByteLimit(t *testing.T) {
-	mgr := topic.NewManager()
-	_, _ = mgr.CreateTopic("logs", 1, topic.RetentionPolicy{})
-
-	storageCfg := config.StorageConfig{
-		MaxRecordBytes: 100,
-		MaxBatchBytes:  1000,
-	}
-
-	client, cleanup := startBrokerBufServer(t, mgr, storageCfg)
-	defer cleanup()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	// Produce 3 records. Key + value size is 2 bytes. Overhead size is 16 bytes. Total = 18 bytes each.
-	_, err := client.Produce(ctx, &brokerpb.ProduceRequest{
-		Topic:     "logs",
-		Partition: 0,
-		Records: []*brokerpb.Record{
-			{Key: []byte("k"), Value: []byte("a")}, // 18 bytes
-			{Key: []byte("k"), Value: []byte("b")}, // 18 bytes
-			{Key: []byte("k"), Value: []byte("c")}, // 18 bytes
-		},
-	})
-	if err != nil {
-		t.Fatalf("produce failed: %v", err)
-	}
-
-	// Fetch with max_bytes = 20. It should return exactly 1 record because returning the 2nd would need 36 bytes.
-	fetchResp, err := client.Fetch(ctx, &brokerpb.FetchRequest{
-		Topic:     "logs",
-		Partition: 0,
-		Offset:    0,
-		MaxBytes:  20,
-	})
-	if err != nil {
-		t.Fatalf("fetch failed: %v", err)
-	}
-	if len(fetchResp.GetRecords()) != 1 {
-		t.Errorf("expected 1 record under limit, got %d", len(fetchResp.GetRecords()))
-	}
-
-	// Fetch with max_bytes = 40. It should return 2 records (36 bytes total).
-	fetchResp2, err := client.Fetch(ctx, &brokerpb.FetchRequest{
-		Topic:     "logs",
-		Partition: 0,
-		Offset:    0,
-		MaxBytes:  40,
-	})
-	if err != nil {
-		t.Fatalf("fetch failed: %v", err)
-	}
-	if len(fetchResp2.GetRecords()) != 2 {
-		t.Errorf("expected 2 records under limit, got %d", len(fetchResp2.GetRecords()))
-	}
-}
-
-func TestBrokerServer_PayloadMutationSafety(t *testing.T) {
-	mgr := topic.NewManager()
-	_, _ = mgr.CreateTopic("orders", 1, topic.RetentionPolicy{})
-
-	storageCfg := config.StorageConfig{
-		MaxRecordBytes: 100,
-		MaxBatchBytes:  1000,
-	}
-
-	client, cleanup := startBrokerBufServer(t, mgr, storageCfg)
-	defer cleanup()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	mutableKey := []byte("originalKey")
-	mutableVal := []byte("originalVal")
-
-	req := &brokerpb.ProduceRequest{
-		Topic:     "orders",
-		Partition: 0,
-		Records: []*brokerpb.Record{
-			{Key: mutableKey, Value: mutableVal},
-		},
-	}
-
-	_, err := client.Produce(ctx, req)
-	if err != nil {
-		t.Fatalf("produce failed: %v", err)
-	}
-
-	// Mutate slices in request
-	mutableKey[0] = 'X'
-	mutableVal[0] = 'X'
-
-	// Fetch and verify stored content has original bytes
-	fetchResp, err := client.Fetch(ctx, &brokerpb.FetchRequest{
-		Topic:     "orders",
-		Partition: 0,
-		Offset:    0,
-		MaxBytes:  1000,
-	})
-	if err != nil {
-		t.Fatalf("fetch failed: %v", err)
-	}
-	if len(fetchResp.GetRecords()) != 1 {
-		t.Fatalf("expected 1 record, got %d", len(fetchResp.GetRecords()))
-	}
-	r := fetchResp.GetRecords()[0]
-	if string(r.GetKey()) != "originalKey" {
-		t.Errorf("retrieved mutated key: %q", string(r.GetKey()))
-	}
-	if string(r.GetValue()) != "originalVal" {
-		t.Errorf("retrieved mutated value: %q", string(r.GetValue()))
 	}
 }

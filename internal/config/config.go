@@ -16,9 +16,11 @@ type BrokerConfig struct {
 }
 
 type StorageConfig struct {
-	DataDirectory  string `yaml:"data_directory"`
-	MaxRecordBytes int    `yaml:"max_record_bytes"`
-	MaxBatchBytes  int    `yaml:"max_batch_bytes"`
+	DataDirectory   string `yaml:"data_directory"`
+	MaxRecordBytes  int    `yaml:"max_record_bytes"`
+	MaxBatchBytes   int    `yaml:"max_batch_bytes"`
+	SegmentMaxBytes int64  `yaml:"segment_max_bytes"`
+	FlushMode       string `yaml:"flush_mode"`
 }
 
 type ObservabilityConfig struct {
@@ -40,9 +42,11 @@ func DefaultConfig() Config {
 			ShutdownTimeoutStr: "15s",
 		},
 		Storage: StorageConfig{
-			DataDirectory:  "./data",
-			MaxRecordBytes: 1048576, // 1 MiB
-			MaxBatchBytes:  5242880, // 5 MiB
+			DataDirectory:   "./data",
+			MaxRecordBytes:  1048576,   // 1 MiB
+			MaxBatchBytes:   5242880,   // 5 MiB
+			SegmentMaxBytes: 134217728, // 128 MiB
+			FlushMode:       "sync",
 		},
 		Observability: ObservabilityConfig{
 			LogLevel:  "info",
@@ -92,6 +96,15 @@ func Load(path string) (Config, error) {
 			cfg.Storage.MaxBatchBytes = bytesVal
 		}
 	}
+	if val := os.Getenv("BROKER_SEGMENT_MAX_BYTES"); val != "" {
+		var bytesVal int64
+		if _, err := fmt.Sscanf(val, "%d", &bytesVal); err == nil {
+			cfg.Storage.SegmentMaxBytes = bytesVal
+		}
+	}
+	if val := os.Getenv("BROKER_FLUSH_MODE"); val != "" {
+		cfg.Storage.FlushMode = val
+	}
 	if val := os.Getenv("BROKER_LOG_LEVEL"); val != "" {
 		cfg.Observability.LogLevel = val
 	}
@@ -122,6 +135,21 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.Storage.MaxBatchBytes < cfg.Storage.MaxRecordBytes {
 		return Config{}, fmt.Errorf("storage.max_batch_bytes (%d) cannot be less than storage.max_record_bytes (%d)", cfg.Storage.MaxBatchBytes, cfg.Storage.MaxRecordBytes)
+	}
+
+	if cfg.Storage.SegmentMaxBytes <= 0 {
+		return Config{}, fmt.Errorf("storage.segment_max_bytes must be positive, got %d", cfg.Storage.SegmentMaxBytes)
+	}
+	if cfg.Storage.SegmentMaxBytes < int64(cfg.Storage.MaxBatchBytes) {
+		return Config{}, fmt.Errorf("storage.segment_max_bytes (%d) cannot be less than storage.max_batch_bytes (%d)", cfg.Storage.SegmentMaxBytes, cfg.Storage.MaxBatchBytes)
+	}
+
+	flushMode := strings.ToLower(cfg.Storage.FlushMode)
+	switch flushMode {
+	case "sync", "async":
+		cfg.Storage.FlushMode = flushMode
+	default:
+		return Config{}, fmt.Errorf("invalid storage.flush_mode %q (must be sync, async)", cfg.Storage.FlushMode)
 	}
 
 	logLevel := strings.ToLower(cfg.Observability.LogLevel)

@@ -56,7 +56,13 @@ func startAdminBufServer(t *testing.T, mgr *topic.Manager) (brokerpb.AdminServic
 }
 
 func TestAdminServer_Lifecycle(t *testing.T) {
-	mgr := topic.NewManager()
+	dir := t.TempDir()
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
 	client, cleanup := startAdminBufServer(t, mgr)
 	defer cleanup()
 
@@ -134,7 +140,13 @@ func TestAdminServer_Lifecycle(t *testing.T) {
 }
 
 func TestAdminServer_Validation(t *testing.T) {
-	mgr := topic.NewManager()
+	dir := t.TempDir()
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
 	client, cleanup := startAdminBufServer(t, mgr)
 	defer cleanup()
 
@@ -164,6 +176,12 @@ func TestAdminServer_Validation(t *testing.T) {
 			req:     &brokerpb.CreateTopicRequest{Name: "-invalid", PartitionCount: 1},
 			wantErr: codes.InvalidArgument,
 			errSub:  "invalid topic name",
+		},
+		{
+			name:    "too many partitions",
+			req:     &brokerpb.CreateTopicRequest{Name: "valid", PartitionCount: topic.MaxPartitionsPerTopic + 1},
+			wantErr: codes.InvalidArgument,
+			errSub:  "too many partitions",
 		},
 	}
 

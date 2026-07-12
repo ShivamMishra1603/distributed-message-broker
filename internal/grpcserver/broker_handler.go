@@ -7,7 +7,8 @@ import (
 
 	brokerpb "github.com/ShivamMishra1603/distributed-message-broker/gen/proto/broker/v1"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/config"
-	"github.com/ShivamMishra1603/distributed-message-broker/internal/partition"
+	"github.com/ShivamMishra1603/distributed-message-broker/internal/model"
+	"github.com/ShivamMishra1603/distributed-message-broker/internal/storage"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/topic"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -42,9 +43,9 @@ func (b *BrokerServer) Produce(ctx context.Context, req *brokerpb.ProduceRequest
 		return nil, status.Errorf(codes.Internal, "failed to resolve partition: %v", err)
 	}
 
-	// 2. Validate batch and record payload sizes
+	// 2. Validate batch and record payload sizes early
 	totalBatchPayloadSize := 0
-	internalRecs := make([]partition.Record, len(req.GetRecords()))
+	internalRecs := make([]model.Record, len(req.GetRecords()))
 
 	for i, r := range req.GetRecords() {
 		recPayloadSize := recordPayloadSize(r)
@@ -53,15 +54,15 @@ func (b *BrokerServer) Produce(ctx context.Context, req *brokerpb.ProduceRequest
 		}
 		totalBatchPayloadSize += recPayloadSize
 
-		headers := make([]partition.Header, len(r.GetHeaders()))
+		headers := make([]model.Header, len(r.GetHeaders()))
 		for j, h := range r.GetHeaders() {
-			headers[j] = partition.Header{
+			headers[j] = model.Header{
 				Key:   h.GetKey(),
 				Value: h.GetValue(),
 			}
 		}
 
-		internalRecs[i] = partition.Record{
+		internalRecs[i] = model.Record{
 			Key:       r.GetKey(),
 			Value:     r.GetValue(),
 			Headers:   headers,
@@ -69,13 +70,12 @@ func (b *BrokerServer) Produce(ctx context.Context, req *brokerpb.ProduceRequest
 		}
 	}
 
-	if totalBatchPayloadSize > b.storageCfg.MaxBatchBytes {
-		return nil, status.Errorf(codes.ResourceExhausted, "total batch payload size (%d) exceeds max_batch_bytes (%d)", totalBatchPayloadSize, b.storageCfg.MaxBatchBytes)
-	}
-
-	// 3. Append to log
+	// 3. Append to log (durable storage formats and limits will be checked here)
 	baseOffset, lastOffset, err := log.Append(internalRecs)
 	if err != nil {
+		if errors.Is(err, storage.ErrBatchTooLarge) {
+			return nil, status.Errorf(codes.ResourceExhausted, "batch payload exceeds maxBatchBytes: %v", err)
+		}
 		return nil, status.Errorf(codes.Internal, "failed to append records to log: %v", err)
 	}
 
@@ -103,7 +103,7 @@ func (b *BrokerServer) Fetch(ctx context.Context, req *brokerpb.FetchRequest) (*
 	// 2. Read records
 	stored, err := log.Read(req.GetOffset(), int(req.GetMaxBytes()))
 	if err != nil {
-		if errors.Is(err, partition.ErrOffsetOutOfRange) {
+		if errors.Is(err, storage.ErrOffsetOutOfRange) {
 			return nil, status.Errorf(codes.OutOfRange, "requested offset %d is out of range for partition", req.GetOffset())
 		}
 		return nil, status.Errorf(codes.Internal, "failed to read records: %v", err)
@@ -135,11 +135,11 @@ func (b *BrokerServer) Fetch(ctx context.Context, req *brokerpb.FetchRequest) (*
 }
 
 func (b *BrokerServer) CommitOffset(ctx context.Context, req *brokerpb.CommitOffsetRequest) (*brokerpb.CommitOffsetResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "CommitOffset is not implemented in Milestone 2")
+	return nil, status.Errorf(codes.Unimplemented, "CommitOffset is not implemented in Milestone 3")
 }
 
 func (b *BrokerServer) FetchCommittedOffset(ctx context.Context, req *brokerpb.FetchCommittedOffsetRequest) (*brokerpb.FetchCommittedOffsetResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "FetchCommittedOffset is not implemented in Milestone 2")
+	return nil, status.Errorf(codes.Unimplemented, "FetchCommittedOffset is not implemented in Milestone 3")
 }
 
 func recordPayloadSize(r *brokerpb.Record) int {

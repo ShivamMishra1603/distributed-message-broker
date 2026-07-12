@@ -13,6 +13,7 @@ import (
 func TestBroker_Lifecycle(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Broker.GRPCAddress = "127.0.0.1:0"
+	cfg.Storage.DataDirectory = t.TempDir()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 

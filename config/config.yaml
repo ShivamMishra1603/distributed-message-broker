@@ -6,6 +6,8 @@ storage:
   data_directory: "./data"
   max_record_bytes: 1048576
   max_batch_bytes: 5242880
+  segment_max_bytes: 134217728
+  flush_mode: "sync"
 
 observability:
   log_level: "info"

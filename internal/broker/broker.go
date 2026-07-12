@@ -18,7 +18,16 @@ type Broker struct {
 
 // New instantiates the Broker orchestrator wiring all packages.
 func New(cfg config.Config, logger *slog.Logger) (*Broker, error) {
-	topicManager := topic.NewManager()
+	topicManager, err := topic.NewManager(
+		cfg.Storage.DataDirectory,
+		cfg.Storage.SegmentMaxBytes,
+		int64(cfg.Storage.MaxBatchBytes),
+		cfg.Storage.FlushMode,
+		logger,
+	)
+	if err != nil {
+		return nil, err
+	}
 
 	admin := grpcserver.NewAdminServer(logger, topicManager)
 	brokerSrv := grpcserver.NewBrokerServer(logger, topicManager, cfg.Storage)
@@ -41,7 +50,10 @@ func (b *Broker) Start() error {
 	return b.grpcServer.Start()
 }
 
-// Shutdown gracefully stops the broker server.
+// Shutdown gracefully stops the broker server, then flushes and closes storage.
 func (b *Broker) Shutdown(ctx context.Context) error {
-	return b.grpcServer.Shutdown(ctx)
+	if err := b.grpcServer.Shutdown(ctx); err != nil {
+		return err
+	}
+	return b.topicManager.Close()
 }

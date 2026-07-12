@@ -17,9 +17,21 @@ import (
 
 func TestServer_LifecycleAndHealth(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mgr := topic.NewManager()
+	dir := t.TempDir()
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
 	admin := NewAdminServer(logger, mgr)
-	broker := NewBrokerServer(logger, mgr, config.StorageConfig{MaxRecordBytes: 100, MaxBatchBytes: 500})
+	broker := NewBrokerServer(logger, mgr, config.StorageConfig{
+		DataDirectory:   dir,
+		MaxRecordBytes:  100,
+		MaxBatchBytes:   500,
+		SegmentMaxBytes: 1000,
+		FlushMode:       "sync",
+	})
 
 	srv := New("127.0.0.1:0", logger, admin, broker, 1024*1024)
 
@@ -102,9 +114,21 @@ func TestServer_LifecycleAndHealth(t *testing.T) {
 
 func TestServer_ShutdownTimeoutReturnsError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mgr := topic.NewManager()
+	dir := t.TempDir()
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
 	admin := NewAdminServer(logger, mgr)
-	broker := NewBrokerServer(logger, mgr, config.StorageConfig{MaxRecordBytes: 100, MaxBatchBytes: 500})
+	broker := NewBrokerServer(logger, mgr, config.StorageConfig{
+		DataDirectory:   dir,
+		MaxRecordBytes:  100,
+		MaxBatchBytes:   500,
+		SegmentMaxBytes: 1000,
+		FlushMode:       "sync",
+	})
 
 	srv := New("127.0.0.1:0", logger, admin, broker, 1024*1024)
 
@@ -125,7 +149,7 @@ func TestServer_ShutdownTimeoutReturnsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := srv.Shutdown(ctx)
+	err = srv.Shutdown(ctx)
 	if err == nil {
 		t.Error("expected error from timed-out shutdown, got nil")
 	}
@@ -133,9 +157,21 @@ func TestServer_ShutdownTimeoutReturnsError(t *testing.T) {
 
 func TestServer_BindError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mgr := topic.NewManager()
+	dir := t.TempDir()
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
 	admin := NewAdminServer(logger, mgr)
-	broker := NewBrokerServer(logger, mgr, config.StorageConfig{MaxRecordBytes: 100, MaxBatchBytes: 500})
+	broker := NewBrokerServer(logger, mgr, config.StorageConfig{
+		DataDirectory:   dir,
+		MaxRecordBytes:  100,
+		MaxBatchBytes:   500,
+		SegmentMaxBytes: 1000,
+		FlushMode:       "sync",
+	})
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
