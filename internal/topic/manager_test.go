@@ -52,6 +52,12 @@ func TestManager_CreateTopicValidation(t *testing.T) {
 		t.Error("expected error for partition count = 0, got nil")
 	}
 
+	// Exceeded max partitions limit
+	_, err = mgr.CreateTopic("exceeded-partitions", MaxPartitionsPerTopic+1, ret)
+	if !errors.Is(err, ErrTooManyPartitions) {
+		t.Errorf("expected ErrTooManyPartitions, got %v", err)
+	}
+
 	// Duplicate topic
 	_, err = mgr.CreateTopic("duplicate", 1, ret)
 	if err != nil {
@@ -64,11 +70,11 @@ func TestManager_CreateTopicValidation(t *testing.T) {
 
 	// Invalid names
 	invalidNames := []string{
-		"",               // empty
-		"-starts-with",   // starts with hyphen
-		".starts-with",   // starts with dot
-		"invalid/char",   // invalid slash
-		"invalid@char",   // invalid @
+		"",                        // empty
+		"-starts-with",            // starts with hyphen
+		".starts-with",            // starts with dot
+		"invalid/char",            // invalid slash
+		"invalid@char",            // invalid @
 		string(make([]byte, 256)), // too long (256 chars)
 	}
 

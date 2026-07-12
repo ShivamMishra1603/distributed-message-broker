@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	brokerpb "github.com/ShivamMishra1603/distributed-message-broker/gen/proto/broker/v1"
@@ -13,24 +14,37 @@ import (
 )
 
 func main() {
-	brokerAddr := flag.String("broker", "localhost:50051", "Broker gRPC address")
-	partitions := flag.Int("partitions", 0, "Number of partitions (required for create-topic)")
-	flag.Parse()
+	brokerAddr := "localhost:50051"
 
-	args := flag.Args()
-	if len(args) == 0 {
+	// Parse global --broker flag if present before the subcommand
+	subcommandIdx := -1
+	for i := 1; i < len(os.Args); i++ {
+		arg := os.Args[i]
+		if arg == "-broker" || arg == "--broker" {
+			if i+1 < len(os.Args) {
+				brokerAddr = os.Args[i+1]
+				i++ // skip value
+			}
+		} else if !strings.HasPrefix(arg, "-") {
+			subcommandIdx = i
+			break
+		}
+	}
+
+	if subcommandIdx == -1 {
 		printUsage()
 		os.Exit(1)
 	}
 
-	subcommand := args[0]
+	subcommand := os.Args[subcommandIdx]
+	subArgs := os.Args[subcommandIdx+1:]
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, err := grpc.NewClient(*brokerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(brokerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to connect to broker: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to connect to broker at %s: %v\n", brokerAddr, err)
 		os.Exit(1)
 	}
 	defer conn.Close()
@@ -39,11 +53,28 @@ func main() {
 
 	switch subcommand {
 	case "create-topic":
-		if len(args) < 2 {
+		var topicName string
+		var remainArgs []string
+		for _, arg := range subArgs {
+			if !strings.HasPrefix(arg, "-") && topicName == "" {
+				topicName = arg
+			} else {
+				remainArgs = append(remainArgs, arg)
+			}
+		}
+
+		if topicName == "" {
 			fmt.Fprintln(os.Stderr, "Usage: create-topic <name> --partitions <N>")
 			os.Exit(1)
 		}
-		topicName := args[1]
+
+		createCmd := flag.NewFlagSet("create-topic", flag.ExitOnError)
+		partitions := createCmd.Int("partitions", 0, "Number of partitions")
+		if err := createCmd.Parse(remainArgs); err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing flags: %v\n", err)
+			os.Exit(1)
+		}
+
 		if *partitions <= 0 {
 			fmt.Fprintln(os.Stderr, "Error: --partitions flag must be greater than zero")
 			os.Exit(1)
@@ -75,11 +106,18 @@ func main() {
 		}
 
 	case "describe-topic":
-		if len(args) < 2 {
+		var topicName string
+		for _, arg := range subArgs {
+			if !strings.HasPrefix(arg, "-") {
+				topicName = arg
+				break
+			}
+		}
+
+		if topicName == "" {
 			fmt.Fprintln(os.Stderr, "Usage: describe-topic <name>")
 			os.Exit(1)
 		}
-		topicName := args[1]
 
 		resp, err := client.DescribeTopic(ctx, &brokerpb.DescribeTopicRequest{
 			Name: topicName,

@@ -46,6 +46,9 @@ func (a *AdminServer) CreateTopic(ctx context.Context, req *brokerpb.CreateTopic
 		if errors.Is(err, topic.ErrInvalidTopicName) {
 			return nil, status.Errorf(codes.InvalidArgument, "invalid topic name: %v", err)
 		}
+		if errors.Is(err, topic.ErrTooManyPartitions) {
+			return nil, status.Errorf(codes.InvalidArgument, "too many partitions: %v", err)
+		}
 		return nil, status.Errorf(codes.Internal, "failed to create topic: %v", err)
 	}
 

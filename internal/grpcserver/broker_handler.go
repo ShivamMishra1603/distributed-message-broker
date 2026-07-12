@@ -47,7 +47,7 @@ func (b *BrokerServer) Produce(ctx context.Context, req *brokerpb.ProduceRequest
 	internalRecs := make([]partition.Record, len(req.GetRecords()))
 
 	for i, r := range req.GetRecords() {
-		recPayloadSize := len(r.GetKey()) + len(r.GetValue())
+		recPayloadSize := recordPayloadSize(r)
 		if recPayloadSize > b.storageCfg.MaxRecordBytes {
 			return nil, status.Errorf(codes.ResourceExhausted, "record %d payload size (%d) exceeds max_record_bytes (%d)", i, recPayloadSize, b.storageCfg.MaxRecordBytes)
 		}
@@ -140,4 +140,12 @@ func (b *BrokerServer) CommitOffset(ctx context.Context, req *brokerpb.CommitOff
 
 func (b *BrokerServer) FetchCommittedOffset(ctx context.Context, req *brokerpb.FetchCommittedOffsetRequest) (*brokerpb.FetchCommittedOffsetResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "FetchCommittedOffset is not implemented in Milestone 2")
+}
+
+func recordPayloadSize(r *brokerpb.Record) int {
+	size := len(r.GetKey()) + len(r.GetValue())
+	for _, h := range r.GetHeaders() {
+		size += len(h.GetKey()) + len(h.GetValue())
+	}
+	return size
 }

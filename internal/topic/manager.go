@@ -10,11 +10,14 @@ import (
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/partition"
 )
 
+const MaxPartitionsPerTopic = 1024
+
 var (
 	ErrTopicExists       = errors.New("topic already exists")
 	ErrTopicNotFound     = errors.New("topic not found")
 	ErrPartitionNotFound = errors.New("partition not found")
 	ErrInvalidTopicName  = errors.New("invalid topic name")
+	ErrTooManyPartitions = errors.New("too many partitions requested")
 )
 
 var topicNameRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$`)
@@ -72,6 +75,10 @@ func (m *Manager) CreateTopic(name string, partitionCount int, retention Retenti
 
 	if partitionCount <= 0 {
 		return nil, fmt.Errorf("partition count must be greater than zero, got %d", partitionCount)
+	}
+
+	if partitionCount > MaxPartitionsPerTopic {
+		return nil, fmt.Errorf("%w: requested %d, maximum is %d", ErrTooManyPartitions, partitionCount, MaxPartitionsPerTopic)
 	}
 
 	m.mu.Lock()
