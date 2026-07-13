@@ -307,18 +307,22 @@ func TestStore_FirstIndexEntryZeroZeroAndInterval(t *testing.T) {
 	}
 	defer store.Close()
 
+	if len(store.activeSegment.indexEntries) != 0 {
+		t.Fatalf("expected 0 initial index entries for empty active segment, got %d", len(store.activeSegment.indexEntries))
+	}
+
+	// Append small batch (first append)
+	_, _, err = store.Append([]model.Record{{Key: []byte("k"), Value: []byte("v")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if len(store.activeSegment.indexEntries) != 1 {
-		t.Fatalf("expected 1 initial index entry for empty active segment, got %d", len(store.activeSegment.indexEntries))
+		t.Fatalf("expected 1 index entry after first write, got %d", len(store.activeSegment.indexEntries))
 	}
 	first := store.activeSegment.indexEntries[0]
 	if first.RelativeOffset != 0 || first.Position != 0 {
 		t.Errorf("expected first index entry to be {0, 0}, got {%d, %d}", first.RelativeOffset, first.Position)
-	}
-
-	// Append small batch
-	_, _, err = store.Append([]model.Record{{Key: []byte("k"), Value: []byte("v")}})
-	if err != nil {
-		t.Fatal(err)
 	}
 
 	// Second append should cross index interval 10 bytes and append entry

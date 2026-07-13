@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -113,6 +114,10 @@ func (s *Segment) ReadIndexEntries() ([]IndexEntry, error) {
 		return nil, fmt.Errorf("index size %d is not a multiple of 12 bytes", s.indexSize)
 	}
 
+	if s.indexSize > 64*1024*1024 {
+		return nil, fmt.Errorf("index file size %d exceeds maximum allowable index size (64 MiB)", s.indexSize)
+	}
+
 	numEntries := s.indexSize / 12
 	entries := make([]IndexEntry, numEntries)
 	buf := make([]byte, s.indexSize)
@@ -164,24 +169,23 @@ func (s *Segment) ReadIndexEntries() ([]IndexEntry, error) {
 // AppendIndexEntry appends a 12-byte index entry to the index file.
 // Store.mu must protect this operation and s.indexSize.
 func (s *Segment) AppendIndexEntry(entry IndexEntry) error {
-	buf := make([]byte, 12)
-	binary.BigEndian.PutUint32(buf[0:4], entry.RelativeOffset)
-	binary.BigEndian.PutUint64(buf[4:12], entry.Position)
-
-	n, err := s.indexFile.WriteAt(buf, s.indexSize)
-	if err != nil {
-		return fmt.Errorf("failed to append to index file %q: %w", s.indexPath, err)
-	}
-	if n != 12 {
-		return fmt.Errorf("short write to index file %q: wrote %d of 12 bytes: %w", s.indexPath, n, io.ErrShortWrite)
-	}
-
-	s.indexSize += 12
 	s.indexEntries = append(s.indexEntries, entry)
 	s.lastIndexedPosition = int64(entry.Position)
 	s.indexDirty = true
 
-	return nil
+	buf := make([]byte, 12)
+	binary.BigEndian.PutUint32(buf[0:4], entry.RelativeOffset)
+	binary.BigEndian.PutUint64(buf[4:12], entry.Position)
+
+	n, writeErr := s.indexFile.WriteAt(buf, s.indexSize)
+	if writeErr == nil {
+		if n == 12 {
+			s.indexSize += 12
+		} else {
+			writeErr = io.ErrShortWrite
+		}
+	}
+	return writeErr
 }
 
 // Flush forces writes to disk.
@@ -208,18 +212,7 @@ func (s *Segment) FlushIndex() error {
 
 // Close closes both file handles.
 func (s *Segment) Close() error {
-	var errs []error
-	if err := s.file.Close(); err != nil {
-		errs = append(errs, err)
-	}
-	if err := s.indexFile.Close(); err != nil {
-		errs = append(errs, err)
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("failed to close segment handles: %v", errs)
-	}
-	return nil
+	return errors.Join(s.file.Close(), s.indexFile.Close())
 }
 
 // Size returns the tracked file size.

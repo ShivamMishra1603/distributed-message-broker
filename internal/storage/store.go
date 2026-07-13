@@ -151,11 +151,6 @@ func OpenStore(dir string, segmentMaxBytes int64, maxBatchBytes int64, indexInte
 		store.activeSegment = seg
 		store.logEndOffset = 0
 		store.earliestOffset = 0
-
-		// Write initial {0, 0} index entry for empty active segment
-		if err := seg.AppendIndexEntry(IndexEntry{RelativeOffset: 0, Position: 0}); err != nil {
-			return nil, fmt.Errorf("failed to write initial index entry: %w", err)
-		}
 	} else {
 		store.activeSegment = store.segments[len(store.segments)-1]
 	}
@@ -206,13 +201,6 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 		return 0, 0, ErrBatchTooLarge
 	}
 
-	// Verify Relative Offset limit
-	relative := base - s.activeSegment.baseOffset
-	if relative > math.MaxUint32 {
-		s.writeFailed = true
-		return 0, 0, ErrIndexOffsetOverflow
-	}
-
 	// 3. Roll segment if boundary exceeded
 	if s.activeSegment.Size() > 0 && s.activeSegment.Size()+batchSize > s.segmentMaxBytes {
 		if err := s.activeSegment.Flush(); err != nil {
@@ -228,12 +216,13 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 		}
 		s.segments = append(s.segments, newSeg)
 		s.activeSegment = newSeg
+	}
 
-		// First entry in the new segment is always {0, 0}
-		if err := newSeg.AppendIndexEntry(IndexEntry{RelativeOffset: 0, Position: 0}); err != nil {
-			s.writeFailed = true
-			return 0, 0, err
-		}
+	// Verify Relative Offset limit (recomputed after rollover)
+	relative := base - s.activeSegment.baseOffset
+	if relative > math.MaxUint32 {
+		s.writeFailed = true
+		return 0, 0, ErrIndexOffsetOverflow
 	}
 
 	// 4. Append to active segment
@@ -242,6 +231,10 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 		s.writeFailed = true
 		return 0, 0, err
 	}
+
+	last := base + uint64(len(records)) - 1
+	s.logEndOffset = last + 1
+	s.activeSegment.nextOffset = s.logEndOffset
 
 	// 5. Append index entry if required
 	shouldIndex := len(s.activeSegment.indexEntries) == 0 ||
@@ -252,12 +245,9 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 			RelativeOffset: uint32(relative),
 			Position:       uint64(pos),
 		}
-		if err := s.activeSegment.AppendIndexEntry(entry); err != nil {
-			// Derived index file failures do not poison log offsets, but log warning
-			// and keep in-memory indexEntries valid so read indexing still functions.
-			// However, to ensure durability guarantees, we can return the error.
-			return 0, 0, fmt.Errorf("failed to write sparse index: %w", err)
-		}
+		_ = s.activeSegment.AppendIndexEntry(entry)
+		// Derived index write failures do not fail the produce or reuse offsets.
+		// Segment.AppendIndexEntry already updates s.indexEntries and s.indexDirty.
 	}
 
 	// 6. Apply Flush Policy
@@ -267,10 +257,6 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 			return 0, 0, err
 		}
 	}
-
-	last := base + uint64(len(records)) - 1
-	s.logEndOffset = last + 1
-	s.activeSegment.nextOffset = s.logEndOffset
 
 	return base, last, nil
 }
@@ -351,7 +337,7 @@ func (s *Store) Read(offset uint64, maxBytes int) ([]model.StoredRecord, error) 
 
 			recs, err := DecodeBatch(batchBuf)
 			if err != nil {
-				return nil, fmt.Errorf("failed to decode batch at offset %d inside segment %q: %w", recs[0].Offset, seg.path, err)
+				return nil, fmt.Errorf("failed to decode batch at file position %d inside segment %q: %w", startPos, seg.path, err)
 			}
 
 			for _, r := range recs {
