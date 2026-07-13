@@ -123,10 +123,10 @@ for mode in sync async; do
 
     for run in 1 2 3; do
         echo "Running S1 Flush Mode: ${mode}, Trial: ${run}"
-        ./bin/bench_producer -broker localhost:9092 -topic bench-topic -duration 15s -count 0 -concurrency 4 -batch-size 100 -flush-mode "$mode" -run-number "$run" -output json -output-file "$RESULT_DIR/s1_prod_${mode}_trial_${run}.json"
+        ./bin/bench_producer -broker localhost:9092 -topic bench-topic -duration 10s -count 0 -concurrency 4 -batch-size 100 -flush-mode "$mode" -run-number "$run" -output json -output-file "$RESULT_DIR/s1_prod_${mode}_trial_${run}.json"
         
         # Prepare dataset info in results, then run consumer in duration replay mode
-        ./bin/bench_consumer -broker localhost:9092 -topic bench-topic -duration 15s -count 0 -concurrency 4 -run-number "$run" -output json -output-file "$RESULT_DIR/s1_cons_${mode}_trial_${run}.json"
+        ./bin/bench_consumer -broker localhost:9092 -topic bench-topic -duration 10s -count 0 -concurrency 4 -run-number "$run" -output json -output-file "$RESULT_DIR/s1_cons_${mode}_trial_${run}.json"
     done
 done
 
@@ -140,7 +140,7 @@ for b_size in 1 10 100 500; do
     
     for run in 1 2 3; do
         echo "Running S2 Batching: ${b_size}, Trial: ${run}"
-        ./bin/bench_producer -broker localhost:9092 -topic "bench-s2-${b_size}" -duration 15s -count 0 -concurrency 4 -batch-size "$b_size" -run-number "$run" -output json -output-file "$RESULT_DIR/s2_prod_batch_${b_size}_trial_${run}.json"
+        ./bin/bench_producer -broker localhost:9092 -topic "bench-s2-${b_size}" -duration 10s -count 0 -concurrency 4 -batch-size "$b_size" -run-number "$run" -output json -output-file "$RESULT_DIR/s2_prod_batch_${b_size}_trial_${run}.json"
     done
 done
 
@@ -149,7 +149,7 @@ for m_size in 100 1024 10240; do
     ./bin/admin --broker localhost:9092 create-topic "bench-s3-${m_size}" --partitions 4 || true
     for run in 1 2 3; do
         echo "Running S3 Message Size: ${m_size}B, Trial: ${run}"
-        ./bin/bench_producer -broker localhost:9092 -topic "bench-s3-${m_size}" -msg-size "$m_size" -duration 15s -count 0 -concurrency 4 -batch-size 100 -run-number "$run" -output json -output-file "$RESULT_DIR/s3_prod_msgsize_${m_size}_trial_${run}.json"
+        ./bin/bench_producer -broker localhost:9092 -topic "bench-s3-${m_size}" -msg-size "$m_size" -duration 10s -count 0 -concurrency 4 -batch-size 100 -run-number "$run" -output json -output-file "$RESULT_DIR/s3_prod_msgsize_${m_size}_trial_${run}.json"
     done
 done
 
@@ -162,10 +162,10 @@ for conc in 1 4 16 32; do
 
     for run in 1 2 3; do
         echo "Running S4 Concurrency: ${conc} (multi-partition), Trial: ${run}"
-        ./bin/bench_producer -broker localhost:9092 -topic "bench-s4-multi-${conc}" -duration 15s -count 0 -concurrency "$conc" -batch-size 100 -run-number "$run" -output json -output-file "$RESULT_DIR/s4_prod_multi_conc_${conc}_trial_${run}.json"
+        ./bin/bench_producer -broker localhost:9092 -topic "bench-s4-multi-${conc}" -duration 10s -count 0 -concurrency "$conc" -batch-size 100 -run-number "$run" -output json -output-file "$RESULT_DIR/s4_prod_multi_conc_${conc}_trial_${run}.json"
 
         echo "Running S4 Concurrency: ${conc} (single-partition), Trial: ${run}"
-        ./bin/bench_producer -broker localhost:9092 -topic "bench-s4-single-${conc}" -partition 0 -duration 15s -count 0 -concurrency "$conc" -batch-size 100 -run-number "$run" -output json -output-file "$RESULT_DIR/s4_prod_single_conc_${conc}_trial_${run}.json"
+        ./bin/bench_producer -broker localhost:9092 -topic "bench-s4-single-${conc}" -partition 0 -duration 10s -count 0 -concurrency "$conc" -batch-size 100 -run-number "$run" -output json -output-file "$RESULT_DIR/s4_prod_single_conc_${conc}_trial_${run}.json"
     done
 done
 
@@ -177,7 +177,7 @@ done
 for f_size in 65536 1048576 5242880; do
     for run in 1 2 3; do
         echo "Running S5 Fetch size: ${f_size} bytes, Trial: ${run}"
-        ./bin/bench_consumer -broker localhost:9092 -topic "bench-s5" -duration 15s -count 0 -concurrency 4 -max-fetch-bytes "$f_size" -run-number "$run" -output json -output-file "$RESULT_DIR/s5_cons_fetchsize_${f_size}_trial_${run}.json"
+        ./bin/bench_consumer -broker localhost:9092 -topic "bench-s5" -duration 10s -count 0 -concurrency 4 -max-fetch-bytes "$f_size" -run-number "$run" -output json -output-file "$RESULT_DIR/s5_cons_fetchsize_${f_size}_trial_${run}.json"
     done
 done
 
