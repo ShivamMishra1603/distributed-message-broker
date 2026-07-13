@@ -277,3 +277,24 @@ func TestStore_ConcurrentReaders(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestStore_WriteFailedPoisoning(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(dir, 1024, 1000, "sync", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	store.writeFailed = true
+
+	_, _, err = store.Append([]model.Record{{Key: []byte("k"), Value: []byte("v")}})
+	if !errors.Is(err, ErrStoreCorrupt) {
+		t.Errorf("expected ErrStoreCorrupt, got %v", err)
+	}
+
+	_, err = store.Read(0, 100)
+	if !errors.Is(err, ErrStoreCorrupt) {
+		t.Errorf("expected ErrStoreCorrupt, got %v", err)
+	}
+}

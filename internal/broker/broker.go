@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/config"
@@ -52,8 +53,7 @@ func (b *Broker) Start() error {
 
 // Shutdown gracefully stops the broker server, then flushes and closes storage.
 func (b *Broker) Shutdown(ctx context.Context) error {
-	if err := b.grpcServer.Shutdown(ctx); err != nil {
-		return err
-	}
-	return b.topicManager.Close()
+	grpcErr := b.grpcServer.Shutdown(ctx)
+	storageErr := b.topicManager.Close()
+	return errors.Join(grpcErr, storageErr)
 }

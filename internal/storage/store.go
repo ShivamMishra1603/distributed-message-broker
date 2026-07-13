@@ -19,6 +19,7 @@ var (
 	ErrStoreClosed      = errors.New("store is closed")
 	ErrOffsetOutOfRange = errors.New("offset out of range")
 	ErrBatchTooLarge    = errors.New("batch size exceeds maximum configured limit")
+	ErrStoreCorrupt     = errors.New("store is in a corrupted state due to a previous I/O failure")
 )
 
 type BatchLocation struct {
@@ -38,6 +39,7 @@ type Store struct {
 
 	mu             sync.RWMutex
 	closed         bool
+	writeFailed    bool
 	segments       []*Segment
 	activeSegment  *Segment
 	scanTable      []BatchLocation
@@ -161,6 +163,10 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 		return 0, 0, ErrStoreClosed
 	}
 
+	if s.writeFailed {
+		return 0, 0, ErrStoreCorrupt
+	}
+
 	timestamp := s.clock().UTC().UnixMilli()
 	base := s.logEndOffset
 
@@ -190,12 +196,14 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 	// 3. Roll segment if boundary exceeded
 	if s.activeSegment.Size() > 0 && s.activeSegment.Size()+batchSize > s.segmentMaxBytes {
 		if err := s.activeSegment.Flush(); err != nil {
+			s.writeFailed = true
 			return 0, 0, err
 		}
 		s.activeSegment.active = false
 
 		newSeg, err := NewSegment(s.dir, s.logEndOffset, true)
 		if err != nil {
+			s.writeFailed = true
 			return 0, 0, err
 		}
 		s.segments = append(s.segments, newSeg)
@@ -205,12 +213,14 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 	// 4. Append to active segment
 	pos, err := s.activeSegment.Append(encoded)
 	if err != nil {
+		s.writeFailed = true
 		return 0, 0, err
 	}
 
 	// 5. Apply Flush Policy
 	if s.flushMode == "sync" {
 		if err := s.activeSegment.Flush(); err != nil {
+			s.writeFailed = true
 			return 0, 0, err
 		}
 	}
@@ -243,6 +253,10 @@ func (s *Store) Read(offset uint64, maxBytes int) ([]model.StoredRecord, error) 
 
 	if s.closed {
 		return nil, ErrStoreClosed
+	}
+
+	if s.writeFailed {
+		return nil, ErrStoreCorrupt
 	}
 
 	if offset < s.earliestOffset || offset > s.logEndOffset {
@@ -378,6 +392,9 @@ func (s *Store) scanAndValidateSegment(seg *Segment) (uint64, error) {
 		}
 
 		totalBatchSize := int64(MagicSize+VersionSize+BatchLengthSize) + int64(batchLength)
+		if totalBatchSize > s.maxBatchBytes {
+			return 0, fmt.Errorf("on-disk batch size %d exceeds configured max_batch_bytes %d: %w", totalBatchSize, s.maxBatchBytes, ErrBatchTooLarge)
+		}
 		if currentPos+totalBatchSize > seg.size {
 			// Milestone 3: Return error on incomplete tails (Milestone 4 will truncate)
 			return 0, fmt.Errorf("truncated batch payload in %q", seg.path)

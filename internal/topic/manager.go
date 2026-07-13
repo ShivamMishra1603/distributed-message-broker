@@ -109,18 +109,41 @@ func NewManager(dataDir string, segmentMaxBytes int64, maxBatchBytes int64, flus
 
 		// Reconstruct each topic from metadata configuration
 		for name, dt := range meta.Topics {
+			if name != dt.Name {
+				mgr.Close()
+				return nil, fmt.Errorf("metadata corruption: map key %q does not match topic name %q", name, dt.Name)
+			}
+			if !topicNameRegex.MatchString(dt.Name) {
+				mgr.Close()
+				return nil, fmt.Errorf("metadata corruption: topic name %q is invalid", dt.Name)
+			}
+			if dt.PartitionCount < 1 || dt.PartitionCount > MaxPartitionsPerTopic {
+				mgr.Close()
+				return nil, fmt.Errorf("metadata corruption: topic %q has invalid partition count %d", dt.Name, dt.PartitionCount)
+			}
+
 			partitions := make([]*partition.Log, dt.PartitionCount)
 			for i := 0; i < dt.PartitionCount; i++ {
 				// Assert that directory exists, otherwise fail startup as per crash-consistency requirements
 				pDir := filepath.Join(dataDir, "topics", name, fmt.Sprintf("partition-%d", i))
 				if _, err := os.Stat(pDir); os.IsNotExist(err) {
 					// Clean up any successfully opened stores in this startup attempt
+					for _, p := range partitions {
+						if p != nil {
+							_ = p.Close()
+						}
+					}
 					mgr.Close()
 					return nil, fmt.Errorf("metadata references missing partition directory: %s", pDir)
 				}
 
 				pLog, err := partition.NewLog(name, uint32(i), dataDir, segmentMaxBytes, maxBatchBytes, flushMode, nil)
 				if err != nil {
+					for _, p := range partitions {
+						if p != nil {
+							_ = p.Close()
+						}
+					}
 					mgr.Close()
 					return nil, fmt.Errorf("failed to open partition store for %s-%d: %w", name, i, err)
 				}
@@ -193,21 +216,26 @@ func (m *Manager) CreateTopic(name string, partitionCount int, retention Retenti
 	}
 
 	// 2. Persist metadata update atomically
-	if err := m.saveMetadata(name, DiskTopic{
+	committed, err := m.saveMetadata(name, DiskTopic{
 		Name:           name,
 		PartitionCount: partitionCount,
 		Retention:      retention,
-	}); err != nil {
-		// Rollback partition logs
-		for _, p := range partitions {
-			p.Close()
+	})
+	if err != nil {
+		if !committed {
+			// Rollback partition logs
+			for _, p := range partitions {
+				p.Close()
+			}
+			// Clean up folders
+			for _, d := range createdDirs {
+				os.RemoveAll(d)
+			}
+			os.Remove(filepath.Join(m.dataDir, "topics", name))
+			return nil, fmt.Errorf("failed to persist topic metadata: %w", err)
 		}
-		// Clean up folders
-		for _, d := range createdDirs {
-			os.RemoveAll(d)
-		}
-		os.Remove(filepath.Join(m.dataDir, "topics", name))
-		return nil, fmt.Errorf("failed to persist topic metadata: %w", err)
+		// Rename succeeded, only directory sync failed. Log it and publish the topic.
+		m.logger.Warn("metadata directory sync failed but topics.json write succeeded", "err", err)
 	}
 
 	// 3. Publish to in-memory registry map
@@ -279,10 +307,10 @@ func (m *Manager) Close() error {
 	return nil
 }
 
-func (m *Manager) saveMetadata(newName string, newTopic DiskTopic) error {
+func (m *Manager) saveMetadata(newName string, newTopic DiskTopic) (committed bool, err error) {
 	metadataDir := filepath.Join(m.dataDir, "metadata")
 	if err := os.MkdirAll(metadataDir, 0755); err != nil {
-		return err
+		return false, err
 	}
 
 	// Read existing metadata list first to merge
@@ -292,9 +320,14 @@ func (m *Manager) saveMetadata(newName string, newTopic DiskTopic) error {
 	metadataPath := filepath.Join(metadataDir, "topics.json")
 	if _, err := os.Stat(metadataPath); err == nil {
 		data, err := os.ReadFile(metadataPath)
-		if err == nil {
-			json.Unmarshal(data, &meta)
+		if err != nil {
+			return false, err
 		}
+		if err := json.Unmarshal(data, &meta); err != nil {
+			return false, err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
 	}
 
 	// Add new topic
@@ -302,39 +335,46 @@ func (m *Manager) saveMetadata(newName string, newTopic DiskTopic) error {
 
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	tmpPath := metadataPath + ".tmp"
 	tmpFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if _, err := tmpFile.Write(data); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpPath)
-		return err
+		return false, err
 	}
 
 	if err := tmpFile.Sync(); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpPath)
-		return err
+		return false, err
 	}
 
 	if err := tmpFile.Close(); err != nil {
 		os.Remove(tmpPath)
-		return err
+		return false, err
 	}
 
 	if err := os.Rename(tmpPath, metadataPath); err != nil {
 		os.Remove(tmpPath)
-		return err
+		return false, err
 	}
 
+	// Rename succeeded, rename is committed
+	committed = true
+
 	// Sync metadata directory to commit naming updates
-	return syncDirectory(metadataDir)
+	if err := syncDirectory(metadataDir); err != nil {
+		return committed, err
+	}
+
+	return committed, nil
 }
 
 func syncDirectory(path string) error {
