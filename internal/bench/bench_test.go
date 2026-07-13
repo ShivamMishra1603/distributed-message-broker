@@ -135,7 +135,14 @@ func setupTestBroker(t *testing.T) (*broker.Broker, *grpc.ClientConn, string) {
 		t.Fatalf("failed to start broker: %v", err)
 	}
 
-	conn, err := grpc.Dial(b.GRPCAddress(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial(
+		b.GRPCAddress(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(16*1024*1024),
+			grpc.MaxCallSendMsgSize(16*1024*1024),
+		),
+	)
 	if err != nil {
 		b.Shutdown(context.Background())
 		t.Fatalf("failed to connect to broker: %v", err)

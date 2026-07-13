@@ -67,7 +67,14 @@ func main() {
 	}
 
 	// 1. Setup gRPC connection
-	conn, err := grpc.NewClient(*brokerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(
+		*brokerAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(16*1024*1024),
+			grpc.MaxCallSendMsgSize(16*1024*1024),
+		),
+	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to connect to broker at %s: %v\n", *brokerAddr, err)
 		os.Exit(1)
