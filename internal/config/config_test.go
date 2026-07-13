@@ -174,6 +174,27 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			},
 			wantErr: "invalid storage.flush_mode",
 		},
+		{
+			name: "sub-second retention max_age",
+			setup: func(path string) {
+				t.Setenv("BROKER_RETENTION_MAX_AGE", "500ms")
+			},
+			wantErr: "retention.max_age must be at least 1s",
+		},
+		{
+			name: "fractional retention max_age",
+			setup: func(path string) {
+				t.Setenv("BROKER_RETENTION_MAX_AGE", "1.5s")
+			},
+			wantErr: "retention.max_age must be a whole number of seconds",
+		},
+		{
+			name: "sub-second retention check_interval",
+			setup: func(path string) {
+				t.Setenv("BROKER_RETENTION_CHECK_INTERVAL", "500ms")
+			},
+			wantErr: "retention.check_interval must be at least 1s",
+		},
 	}
 
 	for _, tt := range tests {

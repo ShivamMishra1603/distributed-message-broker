@@ -216,8 +216,11 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid retention.max_age %q: %w", cfg.Retention.DefaultMaxAgeStr, err)
 	}
-	if maxAge <= 0 {
-		return Config{}, fmt.Errorf("retention.max_age must be positive, got %v", maxAge)
+	if maxAge < time.Second {
+		return Config{}, fmt.Errorf("retention.max_age must be at least 1s, got %v", maxAge)
+	}
+	if maxAge%time.Second != 0 {
+		return Config{}, fmt.Errorf("retention.max_age must be a whole number of seconds, got %v", maxAge)
 	}
 	cfg.Retention.DefaultMaxAge = maxAge
 
@@ -225,8 +228,8 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("invalid retention.check_interval %q: %w", cfg.Retention.CheckIntervalStr, err)
 	}
-	if checkInterval <= 0 {
-		return Config{}, fmt.Errorf("retention.check_interval must be positive, got %v", checkInterval)
+	if checkInterval < time.Second {
+		return Config{}, fmt.Errorf("retention.check_interval must be at least 1s, got %v", checkInterval)
 	}
 	cfg.Retention.CheckInterval = checkInterval
 

@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"path/filepath"
 	"sync"
@@ -332,5 +333,54 @@ func TestStore_PhysicalOrderWinsNotTimestamp(t *testing.T) {
 	val, found, _ := store2.Get("group", "topic", 0)
 	if !found || val != 50 {
 		t.Errorf("expected physical order winner (50), got %d (found=%v)", val, found)
+	}
+}
+
+func TestStore_MalformedPayloadPanicSafety(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "malformed-offsets.log")
+
+	// We construct an entry of 36 bytes entryLength.
+	// Prefix = 9 bytes: Magic (4) + Version (1) + entryLength (4) = "OFFS" + 0x01 + 36
+	// Frame size: 36 bytes.
+	// Payload of 32 bytes. The first 4 bytes of frame is CRC.
+	// CRC covers the 32 bytes of payload.
+	// In the payload:
+	// Bytes 0-3: Group length = 25 (declaring 25 bytes, but we only provide 4 bytes group name to cause index panic if unchecked)
+	payload := make([]byte, 32)
+	binary.BigEndian.PutUint32(payload[0:4], 25) // groupLen = 25 (out of bounds)
+	copy(payload[4:8], []byte("g123"))
+
+	// Fill the rest with some topic length (e.g. 1) and details
+	binary.BigEndian.PutUint32(payload[8:12], 1)
+	binary.BigEndian.PutUint32(payload[12:16], 0) // partition
+	binary.BigEndian.PutUint64(payload[16:24], 100) // next offset
+	binary.BigEndian.PutUint64(payload[24:32], 0) // timestamp
+
+	crc := crc32.ChecksumIEEE(payload)
+
+	// Build final entry
+	entry := make([]byte, 9+36)
+	copy(entry[0:4], []byte("OFFS"))
+	entry[4] = 0x01
+	binary.BigEndian.PutUint32(entry[5:9], 36)
+	binary.BigEndian.PutUint32(entry[9:13], crc)
+	copy(entry[13:], payload)
+
+	err := os.WriteFile(path, entry, 0640)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Try to open. Must not panic and must return ErrCorruptOffsetLog.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("OpenStore panicked on malformed payload: %v", r)
+		}
+	}()
+
+	_, err = OpenStore(path, nil)
+	if err == nil || !errors.Is(err, ErrCorruptOffsetLog) {
+		t.Errorf("expected ErrCorruptOffsetLog, got: %v", err)
 	}
 }

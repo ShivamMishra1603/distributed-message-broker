@@ -156,33 +156,56 @@ func (s *Store) recover() error {
 			return fmt.Errorf("%w: crc32 checksum mismatch in complete record at position %d", ErrCorruptOffsetLog, pos)
 		}
 
-		groupLen := binary.BigEndian.Uint32(payload[0:4])
+		cursor := uint32(0)
+		if uint32(len(payload))-cursor < 4 {
+			return fmt.Errorf("%w: payload too short for group length field at position %d", ErrCorruptOffsetLog, pos)
+		}
+		groupLen := binary.BigEndian.Uint32(payload[cursor : cursor+4])
+		cursor += 4
+
 		if groupLen == 0 || groupLen > uint32(MaxConsumerGroupBytes) {
 			return fmt.Errorf("%w: invalid group name length %d at position %d", ErrCorruptOffsetLog, groupLen, pos)
 		}
-		group := string(payload[4 : 4+groupLen])
+		if groupLen > uint32(len(payload))-cursor {
+			return fmt.Errorf("%w: group name extends past payload at position %d", ErrCorruptOffsetLog, pos)
+		}
+		group := string(payload[cursor : cursor+groupLen])
+		cursor += groupLen
+
 		if !utf8.ValidString(group) {
 			return fmt.Errorf("%w: group name at position %d is not valid UTF-8", ErrCorruptOffsetLog, pos)
 		}
 
-		off := 4 + groupLen
-		topicLen := binary.BigEndian.Uint32(payload[off : off+4])
+		if uint32(len(payload))-cursor < 4 {
+			return fmt.Errorf("%w: payload too short for topic length field at position %d", ErrCorruptOffsetLog, pos)
+		}
+		topicLen := binary.BigEndian.Uint32(payload[cursor : cursor+4])
+		cursor += 4
+
 		if topicLen == 0 || topicLen > uint32(MaxTopicNameBytes) {
 			return fmt.Errorf("%w: invalid topic name length %d at position %d", ErrCorruptOffsetLog, topicLen, pos)
 		}
-		topic := string(payload[off+4 : off+4+topicLen])
+		if topicLen > uint32(len(payload))-cursor {
+			return fmt.Errorf("%w: topic name extends past payload at position %d", ErrCorruptOffsetLog, pos)
+		}
+		topic := string(payload[cursor : cursor+topicLen])
+		cursor += topicLen
+
 		if !utf8.ValidString(topic) {
 			return fmt.Errorf("%w: topic name at position %d is not valid UTF-8", ErrCorruptOffsetLog, pos)
 		}
 
-		off = off + 4 + topicLen
 		expectedEntryLen := uint32(OffsetMinRemainder) + groupLen + topicLen
 		if entryLength != expectedEntryLen {
 			return fmt.Errorf("%w: entry length %d does not match expected size %d based on payloads at position %d", ErrCorruptOffsetLog, entryLength, expectedEntryLen, pos)
 		}
 
-		partition := binary.BigEndian.Uint32(payload[off : off+4])
-		nextOffset := binary.BigEndian.Uint64(payload[off+4 : off+12])
+		if uint32(len(payload))-cursor != 20 {
+			return fmt.Errorf("%w: payload remainder does not match expected size at position %d", ErrCorruptOffsetLog, pos)
+		}
+
+		partition := binary.BigEndian.Uint32(payload[cursor : cursor+4])
+		nextOffset := binary.BigEndian.Uint64(payload[cursor+4 : cursor+12])
 
 		key := Key{Group: group, Topic: topic, Partition: partition}
 		s.offsets[key] = nextOffset

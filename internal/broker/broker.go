@@ -89,7 +89,21 @@ func (b *Broker) Start() error {
 	b.maintenanceWG.Add(1)
 	go b.runRetentionWorker()
 
-	return b.grpcServer.Start()
+	err := b.grpcServer.Start()
+	if err != nil {
+		b.maintenanceCancel()
+		b.maintenanceWG.Wait()
+
+		b.mu.Lock()
+		b.started = false
+		mCtx, mCancel := context.WithCancel(context.Background())
+		b.maintenanceCtx = mCtx
+		b.maintenanceCancel = mCancel
+		b.mu.Unlock()
+
+		return err
+	}
+	return nil
 }
 
 // Shutdown gracefully stops the broker server, then flushes and closes storage.

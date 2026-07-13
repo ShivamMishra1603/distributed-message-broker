@@ -232,10 +232,8 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 		return 0, 0, err
 	}
 
-	for _, r := range records {
-		if r.Timestamp > s.activeSegment.maxTimestamp {
-			s.activeSegment.maxTimestamp = r.Timestamp
-		}
+	if timestamp > s.activeSegment.maxTimestamp {
+		s.activeSegment.maxTimestamp = timestamp
 	}
 
 	last := base + uint64(len(records)) - 1
