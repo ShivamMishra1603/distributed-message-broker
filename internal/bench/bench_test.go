@@ -1,10 +1,19 @@
 package bench
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"math/rand"
 	"testing"
 	"time"
+
+	brokerpb "github.com/ShivamMishra1603/distributed-message-broker/gen/proto/broker/v1"
+	"github.com/ShivamMishra1603/distributed-message-broker/internal/broker"
+	"github.com/ShivamMishra1603/distributed-message-broker/internal/config"
+	"github.com/ShivamMishra1603/distributed-message-broker/internal/logger"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestLatencySampler_Basic(t *testing.T) {
@@ -105,5 +114,173 @@ func TestLatencySampler_EmptyReport(t *testing.T) {
 	report := sampler.GetReport()
 	if fmt.Sprintf("%v", report) != "{0 0 0 0 0 0}" {
 		t.Errorf("expected empty report to be all zero values, got %v", report)
+	}
+}
+
+func setupTestBroker(t *testing.T) (*broker.Broker, *grpc.ClientConn, string) {
+	dir := t.TempDir()
+	log, _ := logger.New("error", "json", io.Discard)
+
+	cfg := config.DefaultConfig()
+	cfg.Storage.DataDirectory = dir
+	cfg.Broker.GRPCAddress = "127.0.0.1:0"
+	cfg.Broker.HTTPAddress = "127.0.0.1:0"
+
+	b, err := broker.New(cfg, log)
+	if err != nil {
+		t.Fatalf("failed to create broker: %v", err)
+	}
+
+	if err := b.Start(); err != nil {
+		t.Fatalf("failed to start broker: %v", err)
+	}
+
+	conn, err := grpc.Dial(b.GRPCAddress(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		b.Shutdown(context.Background())
+		t.Fatalf("failed to connect to broker: %v", err)
+	}
+
+	return b, conn, dir
+}
+
+func TestConsumer_IntegrationScenarios(t *testing.T) {
+	b, conn, _ := setupTestBroker(t)
+	defer b.Shutdown(context.Background())
+	defer conn.Close()
+
+	adminClient := brokerpb.NewAdminServiceClient(conn)
+	brokerClient := brokerpb.NewBrokerServiceClient(conn)
+
+	ctx := context.Background()
+
+	// 1. Create topics
+	_, err := adminClient.CreateTopic(ctx, &brokerpb.CreateTopicRequest{
+		Name:           "empty-topic",
+		PartitionCount: 1,
+	})
+	if err != nil {
+		t.Fatalf("failed to create empty-topic: %v", err)
+	}
+
+	_, err = adminClient.CreateTopic(ctx, &brokerpb.CreateTopicRequest{
+		Name:           "test-topic",
+		PartitionCount: 2,
+	})
+	if err != nil {
+		t.Fatalf("failed to create test-topic: %v", err)
+	}
+
+	// 2. Produce 5 records to partition 0 and 5 records to partition 1 on test-topic
+	for p := uint32(0); p < 2; p++ {
+		var records []*brokerpb.Record
+		for i := 0; i < 5; i++ {
+			records = append(records, &brokerpb.Record{
+				Key:   []byte(fmt.Sprintf("key-%d-%d", p, i)),
+				Value: []byte(fmt.Sprintf("value-%d-%d", p, i)),
+			})
+		}
+		_, err = brokerClient.Produce(ctx, &brokerpb.ProduceRequest{
+			Topic:     "test-topic",
+			Partition: p,
+			Records:   records,
+		})
+		if err != nil {
+			t.Fatalf("failed to produce to partition %d: %v", p, err)
+		}
+	}
+
+	// Sub-Test A: Empty topic (target = 10, should fail because 0 < 10)
+	{
+		benchmarker := NewConsumerBench(
+			conn,
+			"empty-topic",
+			-1, // all partitions
+			10, // target
+			0,  // duration = 0
+			1024*1024,
+			1, // concurrency
+			0, // offset
+			10*time.Millisecond,
+			500*time.Millisecond,
+			1*time.Second,
+			"test-run", 1, false, "commit", false, "now", "go", "os", "arch", "1.0",
+		)
+		_, err := benchmarker.Run(ctx)
+		if err == nil {
+			t.Errorf("expected error for empty topic fetch when target > 0, got nil")
+		}
+	}
+
+	// Sub-Test B: Target exceeds available (target = 20, topic only has 10, should fail)
+	{
+		benchmarker := NewConsumerBench(
+			conn,
+			"test-topic",
+			-1,
+			20,
+			0,
+			1024*1024,
+			2,
+			0,
+			10*time.Millisecond,
+			500*time.Millisecond,
+			1*time.Second,
+			"test-run", 1, false, "commit", false, "now", "go", "os", "arch", "1.0",
+		)
+		_, err := benchmarker.Run(ctx)
+		if err == nil {
+			t.Errorf("expected error when target exceeds available, got nil")
+		}
+	}
+
+	// Sub-Test C: Exact target reached (target = 10, topic has 10, should succeed)
+	{
+		benchmarker := NewConsumerBench(
+			conn,
+			"test-topic",
+			-1,
+			10,
+			0,
+			1024*1024,
+			2,
+			0,
+			10*time.Millisecond,
+			500*time.Millisecond,
+			1*time.Second,
+			"test-run", 1, false, "commit", false, "now", "go", "os", "arch", "1.0",
+		)
+		res, err := benchmarker.Run(ctx)
+		if err != nil {
+			t.Errorf("expected success for exact target, got error: %v", err)
+		}
+		if res == nil || res.CountedRecords != 10 {
+			t.Errorf("expected 10 counted records, got %v", res)
+		}
+	}
+
+	// Sub-Test D: One partition exhausted while another still contains data (target = 7)
+	{
+		benchmarker := NewConsumerBench(
+			conn,
+			"test-topic",
+			-1,
+			7,
+			0,
+			1024*1024,
+			2,
+			0,
+			10*time.Millisecond,
+			500*time.Millisecond,
+			1*time.Second,
+			"test-run", 1, false, "commit", false, "now", "go", "os", "arch", "1.0",
+		)
+		res, err := benchmarker.Run(ctx)
+		if err != nil {
+			t.Errorf("expected success when target is partially met by partitions, got error: %v", err)
+		}
+		if res == nil || res.CountedRecords != 7 {
+			t.Errorf("expected 7 counted records, got %v", res)
+		}
 	}
 }

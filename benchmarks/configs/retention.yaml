@@ -1,0 +1,21 @@
+broker:
+  grpc_address: "localhost:9092"
+  http_address: "localhost:9093"
+
+storage:
+  data_directory: "./benchmarks/data"
+  segment_max_bytes: 1048576 # 1 MiB segment max size
+  max_batch_bytes: 1048576 # 1 MiB max batch bytes
+  index_interval_bytes: 4096 # 4 KiB index interval
+  flush_mode: "sync"
+
+retention:
+  default_max_age: 168h
+  default_max_partition_bytes: 3145728 # 3 MiB partition limit
+  check_interval: 1s # 1 second check ticker
+
+observability:
+  metrics_enabled: true
+  pprof_enabled: true
+  mutex_profile_fraction: 0
+  block_profile_rate: 0

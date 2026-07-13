@@ -18,6 +18,7 @@ type ConsumerBench struct {
 	topic          string
 	partition      int // -1 for all partitions
 	target         int64
+	duration       time.Duration
 	maxFetchBytes  int
 	concurrency    int
 	offset         uint64
@@ -58,6 +59,7 @@ func NewConsumerBench(
 	topic string,
 	partition int,
 	target int64,
+	duration time.Duration,
 	maxFetchBytes int,
 	concurrency int,
 	offset uint64,
@@ -80,6 +82,7 @@ func NewConsumerBench(
 		topic:          topic,
 		partition:      partition,
 		target:         target,
+		duration:       duration,
 		maxFetchBytes:  maxFetchBytes,
 		concurrency:    concurrency,
 		offset:         offset,
@@ -148,6 +151,7 @@ func (c *ConsumerBench) Run(ctx context.Context) (*ConsumerResult, error) {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
+	var startTime time.Time
 	startCh := make(chan struct{})
 	var wg sync.WaitGroup
 
@@ -193,8 +197,14 @@ func (c *ConsumerBench) Run(ctx context.Context) (*ConsumerResult, error) {
 				lastActivity := time.Now()
 
 				for {
-					if atomic.LoadInt64(&c.countedRecords) >= c.target {
-						return
+					if c.duration > 0 {
+						if time.Since(startTime) >= c.duration {
+							return
+						}
+					} else {
+						if atomic.LoadInt64(&c.countedRecords) >= c.target {
+							return
+						}
 					}
 
 					if time.Since(lastActivity) > c.idleTimeout {
@@ -285,7 +295,19 @@ func (c *ConsumerBench) Run(ctx context.Context) (*ConsumerResult, error) {
 
 					// Break if we have reached the log end offset of this partition
 					if currentOffset >= resp.GetLogEndOffset() {
-						break
+						if c.duration > 0 {
+							// Replay from start offset
+							currentOffset = c.offset
+							if numRecords == 0 {
+								select {
+								case <-time.After(c.pollInterval):
+								case <-runCtx.Done():
+									return
+								}
+							}
+						} else {
+							break
+						}
 					}
 
 					if numRecords == 0 {
@@ -300,11 +322,19 @@ func (c *ConsumerBench) Run(ctx context.Context) (*ConsumerResult, error) {
 		}()
 	}
 
-	startTime := time.Now()
+	// Open the start barrier
+	startTime = time.Now()
 	close(startCh)
 
 	wg.Wait()
 	duration := time.Since(startTime)
+
+	if c.duration == 0 {
+		counted := atomic.LoadInt64(&c.countedRecords)
+		if counted < c.target {
+			return nil, fmt.Errorf("consumer benchmark exhausted all partitions after %d records; target was %d", counted, c.target)
+		}
+	}
 
 	c.mu.Lock()
 	crashed := c.crashed

@@ -26,6 +26,7 @@ func main() {
 	partition := flag.Int("partition", -1, "Partition ID to consume from (default -1 for all partitions)")
 	allPartitions := flag.Bool("all-partitions", true, "Consume from all partitions in parallel (concurrency mapped to partitions)")
 	count := flag.Int64("count", 100000, "Total records to consume")
+	duration := flag.Duration("duration", 0, "Run duration (e.g. 15s). If > 0, -count is ignored.")
 	maxFetchBytes := flag.Int("max-fetch-bytes", 1048576, "Maximum bytes to fetch per request (default 1MB)")
 	concurrency := flag.Int("concurrency", 4, "Number of concurrent worker goroutines")
 	offset := flag.Uint64("offset", 0, "Starting log offset to fetch from")
@@ -43,8 +44,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error: -topic must not be empty")
 		os.Exit(1)
 	}
-	if *count <= 0 {
-		fmt.Fprintln(os.Stderr, "Error: -count must be greater than 0")
+	if *duration <= 0 && *count <= 0 {
+		fmt.Fprintln(os.Stderr, "Error: either -count or -duration must be greater than 0")
 		os.Exit(1)
 	}
 	if *maxFetchBytes <= 0 {
@@ -79,6 +80,7 @@ func main() {
 		*topicName,
 		targetPartition,
 		*count,
+		*duration,
 		*maxFetchBytes,
 		*concurrency,
 		*offset,

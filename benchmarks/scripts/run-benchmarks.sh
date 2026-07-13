@@ -18,7 +18,7 @@ go build -ldflags "-X main.commit=${commitSHA} -X main.dirty=${dirtyState} -X ma
 go build -ldflags "-X main.commit=${commitSHA} -X main.dirty=${dirtyState} -X main.buildTime=${buildTime}" -o ./bin/admin ./cmd/admin
 
 # Setup Unique Results Directory
-DATE_STR=$(date +'%Y-%m-%d')
+DATE_STR=$(date +'%Y-%m-%dT%H%M%S')
 OS_NAME=$(uname | tr '[:upper:]' '[:lower:]')
 ARCH_NAME=$(uname -m | tr '[:upper:]' '[:lower:]')
 DIRTY_SUFFIX=""
@@ -123,10 +123,10 @@ for mode in sync async; do
 
     for run in 1 2 3; do
         echo "Running S1 Flush Mode: ${mode}, Trial: ${run}"
-        ./bin/bench_producer -broker localhost:9092 -topic bench-topic -count 100000 -concurrency 4 -batch-size 100 -flush-mode "$mode" -run-number "$run" -output json -output-file "$RESULT_DIR/s1_prod_${mode}_trial_${run}.json"
+        ./bin/bench_producer -broker localhost:9092 -topic bench-topic -duration 15s -count 0 -concurrency 4 -batch-size 100 -flush-mode "$mode" -run-number "$run" -output json -output-file "$RESULT_DIR/s1_prod_${mode}_trial_${run}.json"
         
-        # Prepare dataset info in results, then run consumer
-        ./bin/bench_consumer -broker localhost:9092 -topic bench-topic -count 100000 -concurrency 4 -run-number "$run" -output json -output-file "$RESULT_DIR/s1_cons_${mode}_trial_${run}.json"
+        # Prepare dataset info in results, then run consumer in duration replay mode
+        ./bin/bench_consumer -broker localhost:9092 -topic bench-topic -duration 15s -count 0 -concurrency 4 -run-number "$run" -output json -output-file "$RESULT_DIR/s1_cons_${mode}_trial_${run}.json"
     done
 done
 
@@ -138,16 +138,9 @@ start_broker "benchmarks/configs/sync.yaml"
 for b_size in 1 10 100 500; do
     ./bin/admin --broker localhost:9092 create-topic "bench-s2-${b_size}" --partitions 4 || true
     
-    count=100000
-    if [ "$b_size" -eq 1 ]; then
-        count=10000
-    elif [ "$b_size" -eq 10 ]; then
-        count=50000
-    fi
-
     for run in 1 2 3; do
         echo "Running S2 Batching: ${b_size}, Trial: ${run}"
-        ./bin/bench_producer -broker localhost:9092 -topic "bench-s2-${b_size}" -count "$count" -concurrency 4 -batch-size "$b_size" -run-number "$run" -output json -output-file "$RESULT_DIR/s2_prod_batch_${b_size}_trial_${run}.json"
+        ./bin/bench_producer -broker localhost:9092 -topic "bench-s2-${b_size}" -duration 15s -count 0 -concurrency 4 -batch-size "$b_size" -run-number "$run" -output json -output-file "$RESULT_DIR/s2_prod_batch_${b_size}_trial_${run}.json"
     done
 done
 
@@ -156,7 +149,7 @@ for m_size in 100 1024 10240; do
     ./bin/admin --broker localhost:9092 create-topic "bench-s3-${m_size}" --partitions 4 || true
     for run in 1 2 3; do
         echo "Running S3 Message Size: ${m_size}B, Trial: ${run}"
-        ./bin/bench_producer -broker localhost:9092 -topic "bench-s3-${m_size}" -msg-size "$m_size" -count 50000 -concurrency 4 -batch-size 100 -run-number "$run" -output json -output-file "$RESULT_DIR/s3_prod_msgsize_${m_size}_trial_${run}.json"
+        ./bin/bench_producer -broker localhost:9092 -topic "bench-s3-${m_size}" -msg-size "$m_size" -duration 15s -count 0 -concurrency 4 -batch-size 100 -run-number "$run" -output json -output-file "$RESULT_DIR/s3_prod_msgsize_${m_size}_trial_${run}.json"
     done
 done
 
@@ -169,22 +162,22 @@ for conc in 1 4 16 32; do
 
     for run in 1 2 3; do
         echo "Running S4 Concurrency: ${conc} (multi-partition), Trial: ${run}"
-        ./bin/bench_producer -broker localhost:9092 -topic "bench-s4-multi-${conc}" -count 100000 -concurrency "$conc" -batch-size 100 -run-number "$run" -output json -output-file "$RESULT_DIR/s4_prod_multi_conc_${conc}_trial_${run}.json"
+        ./bin/bench_producer -broker localhost:9092 -topic "bench-s4-multi-${conc}" -duration 15s -count 0 -concurrency "$conc" -batch-size 100 -run-number "$run" -output json -output-file "$RESULT_DIR/s4_prod_multi_conc_${conc}_trial_${run}.json"
 
         echo "Running S4 Concurrency: ${conc} (single-partition), Trial: ${run}"
-        ./bin/bench_producer -broker localhost:9092 -topic "bench-s4-single-${conc}" -partition 0 -count 100000 -concurrency "$conc" -batch-size 100 -run-number "$run" -output json -output-file "$RESULT_DIR/s4_prod_single_conc_${conc}_trial_${run}.json"
+        ./bin/bench_producer -broker localhost:9092 -topic "bench-s4-single-${conc}" -partition 0 -duration 15s -count 0 -concurrency "$conc" -batch-size 100 -run-number "$run" -output json -output-file "$RESULT_DIR/s4_prod_single_conc_${conc}_trial_${run}.json"
     done
 done
 
 # S5: Fetch Size Throughput
 ./bin/admin --broker localhost:9092 create-topic "bench-s5" --partitions 4 || true
 # Pre-produce dataset
-./bin/bench_producer -broker localhost:9092 -topic "bench-s5" -count 100000 -concurrency 4 -batch-size 100 >/dev/null
+./bin/bench_producer -broker localhost:9092 -topic "bench-s5" -count 1000000 -concurrency 4 -batch-size 100 >/dev/null
 
 for f_size in 65536 1048576 5242880; do
     for run in 1 2 3; do
         echo "Running S5 Fetch size: ${f_size} bytes, Trial: ${run}"
-        ./bin/bench_consumer -broker localhost:9092 -topic "bench-s5" -count 100000 -concurrency 4 -max-fetch-bytes "$f_size" -run-number "$run" -output json -output-file "$RESULT_DIR/s5_cons_fetchsize_${f_size}_trial_${run}.json"
+        ./bin/bench_consumer -broker localhost:9092 -topic "bench-s5" -duration 15s -count 0 -concurrency 4 -max-fetch-bytes "$f_size" -run-number "$run" -output json -output-file "$RESULT_DIR/s5_cons_fetchsize_${f_size}_trial_${run}.json"
     done
 done
 
@@ -192,70 +185,175 @@ done
 # S6: Restart Recovery and Index Reconstruction
 # ==============================================================================
 stop_broker
+echo "Preparing clean database copy for recovery trials..."
+rm -rf ./benchmarks/data ./benchmarks/data_prep
 start_broker "benchmarks/configs/sync.yaml"
 ./bin/admin --broker localhost:9092 create-topic "bench-s6" --partitions 1 || true
 
-echo "Producing data for recovery benchmarking..."
+# Pre-produce data
 ./bin/bench_producer -broker localhost:9092 -topic "bench-s6" -count 100000 -concurrency 4 -batch-size 100 > /dev/null
-
-# Clean shutdown
 stop_broker
+cp -R ./benchmarks/data ./benchmarks/data_prep
 
-# Restart Recovery with valid indexes
-echo "Measuring restart recovery duration with valid indexes..."
-recStart=$(date +%s%N)
-./bin/broker -config "benchmarks/configs/sync.yaml" > /dev/null 2>&1 &
-BROKER_PID=$!
-ready=0
-for _ in $(seq 1 60); do
-    if curl -fsS http://localhost:9093/readyz >/dev/null 2>&1; then
-        ready=1
-        break
+valid_times=()
+rebuild_times=()
+
+get_median() {
+    local arr=($(for val in "$@"; do echo "$val"; done | sort -n))
+    local len=${#arr[@]}
+    if [ $((len % 2)) -eq 1 ]; then
+        echo "${arr[$((len / 2))]}"
+    else
+        local mid1="${arr[$((len / 2 - 1))]}"
+        local mid2="${arr[$((len / 2))]}"
+        echo "$(( (mid1 + mid2) / 2 ))"
     fi
-    sleep 0.1
-done
-recDuration=$(( ($(date +%s%N) - recStart) / 1000000 ))
-echo "Recovery with valid indexes took: ${recDuration}ms"
-echo "{\"recovery_valid_indexes_ms\": ${recDuration}}" > "$RESULT_DIR/s6_recovery_valid.json"
+}
 
-stop_broker
-
-# Restart Recovery with index reconstruction
-echo "Deleting sparse index files to measure rebuild recovery..."
-find ./benchmarks/data -name "*.index" -type f -delete
-
-recStart=$(date +%s%N)
-./bin/broker -config "benchmarks/configs/sync.yaml" > /dev/null 2>&1 &
-BROKER_PID=$!
-ready=0
-for _ in $(seq 1 60); do
-    if curl -fsS http://localhost:9093/readyz >/dev/null 2>&1; then
-        ready=1
-        break
+# Valid indexes trials
+for run in 1 2 3 4 5; do
+    echo "Running S6 Valid Indexes recovery, Trial: ${run}"
+    rm -rf ./benchmarks/data
+    cp -R ./benchmarks/data_prep ./benchmarks/data
+    
+    recStart=$(date +%s%N)
+    ./bin/broker -config "benchmarks/configs/sync.yaml" > /dev/null 2>&1 &
+    BROKER_PID=$!
+    
+    ready=0
+    for _ in $(seq 1 6000); do
+        if curl -fsS http://localhost:9093/readyz >/dev/null 2>&1; then
+            ready=1
+            break
+        fi
+        sleep 0.01
+    done
+    recDuration=$(( ($(date +%s%N) - recStart) / 1000000 ))
+    
+    if [ "$ready" -ne 1 ]; then
+        echo "Error: Broker failed to start in valid index trial ${run}" >&2
+        exit 1
     fi
-    sleep 0.1
+    echo "Trial ${run} took: ${recDuration}ms"
+    valid_times+=($recDuration)
+    stop_broker
 done
-rebuildDuration=$(( ($(date +%s%N) - recStart) / 1000000 ))
-echo "Recovery with index reconstruction took: ${rebuildDuration}ms"
-echo "{\"recovery_rebuild_indexes_ms\": ${rebuildDuration}}" > "$RESULT_DIR/s6_recovery_rebuild.json"
 
-stop_broker
+# Rebuild indexes trials
+for run in 1 2 3 4 5; do
+    echo "Running S6 Rebuild Indexes recovery, Trial: ${run}"
+    rm -rf ./benchmarks/data
+    cp -R ./benchmarks/data_prep ./benchmarks/data
+    find ./benchmarks/data -name "*.index" -type f -delete
+    
+    recStart=$(date +%s%N)
+    ./bin/broker -config "benchmarks/configs/sync.yaml" > /dev/null 2>&1 &
+    BROKER_PID=$!
+    
+    ready=0
+    for _ in $(seq 1 6000); do
+        if curl -fsS http://localhost:9093/readyz >/dev/null 2>&1; then
+            ready=1
+            break
+        fi
+        sleep 0.01
+    done
+    rebuildDuration=$(( ($(date +%s%N) - recStart) / 1000000 ))
+    
+    if [ "$ready" -ne 1 ]; then
+        echo "Error: Broker failed to start in rebuild index trial ${run}" >&2
+        exit 1
+    fi
+    
+    # Verify indexes exist
+    num_indexes=$(find ./benchmarks/data -name "*.index" | wc -l)
+    if [ "$num_indexes" -eq 0 ]; then
+        echo "Error: No indexes rebuilt in trial ${run}" >&2
+        exit 1
+    fi
+    
+    # Verify a known fetch succeeds
+    ./bin/bench_consumer -broker localhost:9092 -topic "bench-s6" -count 10 -concurrency 1 >/dev/null
+    
+    echo "Trial ${run} took: ${rebuildDuration}ms (rebuilt $num_indexes indexes)"
+    rebuild_times+=($rebuildDuration)
+    stop_broker
+done
+
+valid_median=$(get_median "${valid_times[@]}")
+rebuild_median=$(get_median "${rebuild_times[@]}")
+
+echo "Valid Indexes median: ${valid_median}ms"
+echo "Index Reconstruction median: ${rebuild_median}ms"
+
+# Write JSON recovery outputs
+echo "{\"valid_trials\": [$(echo "${valid_times[@]}" | tr ' ' ',')], \"median_ms\": ${valid_median}}" > "$RESULT_DIR/s6_recovery_valid.json"
+echo "{\"rebuild_trials\": [$(echo "${rebuild_times[@]}" | tr ' ' ',')], \"median_ms\": ${rebuild_median}}" > "$RESULT_DIR/s6_recovery_rebuild.json"
+
+# Clean prep files
+rm -rf ./benchmarks/data_prep
 
 # ==============================================================================
 # S7: Retention Cleanup
 # ==============================================================================
-# Set up short size retention
-start_broker "benchmarks/configs/sync.yaml"
+echo "Running S7 retention benchmark..."
+start_broker "benchmarks/configs/retention.yaml"
 ./bin/admin --broker localhost:9092 create-topic "bench-s7" --partitions 1 || true
-# Produce records to roll segments. Config has 128MB max. Let's produce plenty of messages
-# Wait, rather than producing gigabytes, we can trigger retention cleanup by age or size if we roll segments.
-# The operational benchmark verifies retention deletion executes successfully.
-# Let's run a short test to trigger retention.
-echo "Running retention test..."
+
+# Produce 50,000 records of 100 bytes (approx 5.5MB of data)
 ./bin/bench_producer -broker localhost:9092 -topic "bench-s7" -count 50000 -concurrency 4 -batch-size 100 >/dev/null
-# Wait retention check interval
-sleep 2
-echo "Retention operational benchmark finished."
+
+# Check files before retention triggers
+files_before=$(ls ./benchmarks/data/topics/bench-s7/partition-0)
+num_before=$(echo "$files_before" | wc -l)
+echo "Files before retention: $num_before"
+
+retStart=$(date +%s%N)
+
+# Wait up to 10 seconds for retention check to fire and delete files
+deleted=0
+for _ in $(seq 1 100); do
+    files_now=$(ls ./benchmarks/data/topics/bench-s7/partition-0 2>/dev/null || true)
+    num_now=$(echo "$files_now" | wc -l)
+    if [ "$num_before" -gt "$num_now" ]; then
+        deleted=1
+        break
+    fi
+    sleep 0.1
+done
+
+retDuration=$(( ($(date +%s%N) - retStart) / 1000000 ))
+
+if [ "$deleted" -ne 1 ]; then
+    echo "Error: Retention cleanup failed to delete old segments within 10s."
+    exit 1
+fi
+
+echo "Retention detection and cleanup completed in ${retDuration}ms"
+
+# Perform retention assertions
+files_after=$(ls ./benchmarks/data/topics/bench-s7/partition-0)
+active_segment=$(echo "$files_after" | sort | tail -n 1)
+echo "Active segment after retention: $active_segment"
+
+if [ -z "$active_segment" ]; then
+    echo "Error: Active segment was deleted!"
+    exit 1
+fi
+
+# Verify orphan check (no indexes without matching log file)
+for idx in ./benchmarks/data/topics/bench-s7/partition-0/*.index; do
+    [ -e "$idx" ] || continue
+    base="${idx%.index}"
+    if [ ! -f "${base}.log" ]; then
+        echo "Error: Orphaned index found: $idx"
+        exit 1
+    fi
+done
+
+# Write result
+echo "{\"retention_deleted\": true, \"detection_and_cleanup_latency_ms\": ${retDuration}}" > "$RESULT_DIR/s7_retention.json"
+stop_broker
 
 # ==============================================================================
 # DIAGNOSTIC PROFILING RUN

@@ -24,6 +24,7 @@ type ProducerBench struct {
 	topic          string
 	msgSize        int
 	total          int64
+	duration       time.Duration
 	concurrency    int
 	batchSize      int
 	partition      int // -1 for round-robin
@@ -63,6 +64,7 @@ func NewProducerBench(
 	topic string,
 	msgSize int,
 	total int64,
+	duration time.Duration,
 	concurrency int,
 	batchSize int,
 	partition int,
@@ -85,6 +87,7 @@ func NewProducerBench(
 		topic:          topic,
 		msgSize:        msgSize,
 		total:          total,
+		duration:       duration,
 		concurrency:    concurrency,
 		batchSize:      batchSize,
 		partition:      partition,
@@ -143,6 +146,7 @@ func (p *ProducerBench) Run(ctx context.Context) (*ProducerResult, error) {
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
+	var startTime time.Time
 	startCh := make(chan struct{})
 	var wg sync.WaitGroup
 
@@ -162,15 +166,21 @@ func (p *ProducerBench) Run(ctx context.Context) (*ProducerResult, error) {
 				default:
 				}
 
-				startIdx := atomic.AddInt64(&p.nextRecord, int64(p.batchSize)) - int64(p.batchSize)
-				if startIdx >= p.total {
-					return
-				}
-
-				remaining := p.total - startIdx
 				currentBatchSize := int(p.batchSize)
-				if remaining < int64(p.batchSize) {
-					currentBatchSize = int(remaining)
+				if p.duration > 0 {
+					if time.Since(startTime) >= p.duration {
+						return
+					}
+					atomic.AddInt64(&p.nextRecord, int64(currentBatchSize))
+				} else {
+					startIdx := atomic.AddInt64(&p.nextRecord, int64(p.batchSize)) - int64(p.batchSize)
+					if startIdx >= p.total {
+						return
+					}
+					remaining := p.total - startIdx
+					if remaining < int64(p.batchSize) {
+						currentBatchSize = int(remaining)
+					}
 				}
 
 				// Resolve target partition for this request batch
@@ -250,7 +260,7 @@ func (p *ProducerBench) Run(ctx context.Context) (*ProducerResult, error) {
 	}
 
 	// Open the start barrier
-	startTime := time.Now()
+	startTime = time.Now()
 	close(startCh)
 
 	// Wait for workers

@@ -25,6 +25,7 @@ func main() {
 	topicName := flag.String("topic", "bench-topic", "Topic name")
 	msgSize := flag.Int("msg-size", 100, "Record message payload size in bytes")
 	count := flag.Int64("count", 100000, "Total records to produce")
+	duration := flag.Duration("duration", 0, "Run duration (e.g. 15s). If > 0, -count is ignored.")
 	concurrency := flag.Int("concurrency", 4, "Number of concurrent workers")
 	batchSize := flag.Int("batch-size", 100, "Number of records to batch per Produce request")
 	partition := flag.Int("partition", -1, "Target partition ID (-1 for round-robin across partitions)")
@@ -46,8 +47,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error: -msg-size must be greater than 0")
 		os.Exit(1)
 	}
-	if *count <= 0 {
-		fmt.Fprintln(os.Stderr, "Error: -count must be greater than 0")
+	if *duration <= 0 && *count <= 0 {
+		fmt.Fprintln(os.Stderr, "Error: either -count or -duration must be greater than 0")
 		os.Exit(1)
 	}
 	if *concurrency <= 0 {
@@ -73,6 +74,7 @@ func main() {
 		*topicName,
 		*msgSize,
 		*count,
+		*duration,
 		*concurrency,
 		*batchSize,
 		*partition,

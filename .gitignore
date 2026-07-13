@@ -35,6 +35,10 @@ go.work.sum
 # Project Specific
 /instructions
 /data
+/bin/
+/benchmarks/data/
+/benchmarks/results/*
+!/benchmarks/results/.gitkeep
 
 # macOS metadata
 .DS_Store

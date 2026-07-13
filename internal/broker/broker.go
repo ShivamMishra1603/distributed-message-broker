@@ -268,3 +268,17 @@ func (b *Broker) runRetentionWorker() {
 		}
 	}
 }
+
+func (b *Broker) GRPCAddress() string {
+	if b.grpcServer == nil {
+		return ""
+	}
+	return b.grpcServer.Address()
+}
+
+func (b *Broker) HTTPAddress() string {
+	if b.httpServer == nil {
+		return ""
+	}
+	return b.httpServer.Address()
+}
