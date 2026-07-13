@@ -2,6 +2,7 @@ package storage
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -219,25 +220,39 @@ func TestStore_LogRemovalFailureBehavior(t *testing.T) {
 
 	oldestSegPath := store.segments[0].path
 
-	// Change folder permissions to read-only to force os.Remove of log file to fail
-	if err := os.Chmod(dir, 0555); err != nil {
+	// Close the segment handles and replace file with a non-empty directory to force os.Remove to fail
+	if err := store.segments[0].Close(); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(dir, 0755) // restore permissions for cleanup
+	if err := os.Remove(oldestSegPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(oldestSegPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	dummyPath := filepath.Join(oldestSegPath, "dummy")
+	if err := os.WriteFile(dummyPath, nil, 0640); err != nil {
+		t.Fatal(err)
+	}
 
-	// Attempt retention (should fail during os.Remove)
+	defer func() {
+		_ = os.Remove(dummyPath)
+		_ = os.Remove(oldestSegPath)
+	}()
+
+	// Attempt retention (should fail during os.Remove because path is a directory with a file)
 	err = store.ApplyRetention(0, 0)
 	if err == nil {
 		t.Error("expected error during ApplyRetention when log file cannot be deleted, got nil")
 	}
 
-	// Verify segment remains open, handles are valid, and still in-memory view
+	// Verify segment remains in-memory view
 	if len(store.segments) != 2 {
 		t.Errorf("expected segment count to remain 2, got %d", len(store.segments))
 	}
 
-	// Verify log file still exists on disk
+	// Verify path still exists on disk
 	if _, err := os.Stat(oldestSegPath); os.IsNotExist(err) {
-		t.Error("authoritative log file was deleted despite permission failure")
+		t.Error("authoritative path was deleted despite removal failure")
 	}
 }

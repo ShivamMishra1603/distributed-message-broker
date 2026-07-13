@@ -353,9 +353,9 @@ func TestStore_MalformedPayloadPanicSafety(t *testing.T) {
 
 	// Fill the rest with some topic length (e.g. 1) and details
 	binary.BigEndian.PutUint32(payload[8:12], 1)
-	binary.BigEndian.PutUint32(payload[12:16], 0) // partition
+	binary.BigEndian.PutUint32(payload[12:16], 0)   // partition
 	binary.BigEndian.PutUint64(payload[16:24], 100) // next offset
-	binary.BigEndian.PutUint64(payload[24:32], 0) // timestamp
+	binary.BigEndian.PutUint64(payload[24:32], 0)   // timestamp
 
 	crc := crc32.ChecksumIEEE(payload)
 
