@@ -16,11 +16,12 @@ type BrokerConfig struct {
 }
 
 type StorageConfig struct {
-	DataDirectory   string `yaml:"data_directory"`
-	MaxRecordBytes  int    `yaml:"max_record_bytes"`
-	MaxBatchBytes   int    `yaml:"max_batch_bytes"`
-	SegmentMaxBytes int64  `yaml:"segment_max_bytes"`
-	FlushMode       string `yaml:"flush_mode"`
+	DataDirectory      string `yaml:"data_directory"`
+	MaxRecordBytes     int    `yaml:"max_record_bytes"`
+	MaxBatchBytes      int    `yaml:"max_batch_bytes"`
+	SegmentMaxBytes    int64  `yaml:"segment_max_bytes"`
+	IndexIntervalBytes int    `yaml:"index_interval_bytes"`
+	FlushMode          string `yaml:"flush_mode"`
 }
 
 type ObservabilityConfig struct {
@@ -42,11 +43,12 @@ func DefaultConfig() Config {
 			ShutdownTimeoutStr: "15s",
 		},
 		Storage: StorageConfig{
-			DataDirectory:   "./data",
-			MaxRecordBytes:  1048576,   // 1 MiB
-			MaxBatchBytes:   5242880,   // 5 MiB
-			SegmentMaxBytes: 134217728, // 128 MiB
-			FlushMode:       "sync",
+			DataDirectory:      "./data",
+			MaxRecordBytes:     1048576,   // 1 MiB
+			MaxBatchBytes:      5242880,   // 5 MiB
+			SegmentMaxBytes:    134217728, // 128 MiB
+			IndexIntervalBytes: 4096,      // 4 KiB
+			FlushMode:          "sync",
 		},
 		Observability: ObservabilityConfig{
 			LogLevel:  "info",
@@ -102,6 +104,12 @@ func Load(path string) (Config, error) {
 			cfg.Storage.SegmentMaxBytes = bytesVal
 		}
 	}
+	if val := os.Getenv("BROKER_INDEX_INTERVAL_BYTES"); val != "" {
+		var bytesVal int
+		if _, err := fmt.Sscanf(val, "%d", &bytesVal); err == nil {
+			cfg.Storage.IndexIntervalBytes = bytesVal
+		}
+	}
 	if val := os.Getenv("BROKER_FLUSH_MODE"); val != "" {
 		cfg.Storage.FlushMode = val
 	}
@@ -142,6 +150,13 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.Storage.SegmentMaxBytes < int64(cfg.Storage.MaxBatchBytes) {
 		return Config{}, fmt.Errorf("storage.segment_max_bytes (%d) cannot be less than storage.max_batch_bytes (%d)", cfg.Storage.SegmentMaxBytes, cfg.Storage.MaxBatchBytes)
+	}
+
+	if cfg.Storage.IndexIntervalBytes <= 0 {
+		return Config{}, fmt.Errorf("storage.index_interval_bytes must be positive, got %d", cfg.Storage.IndexIntervalBytes)
+	}
+	if cfg.Storage.IndexIntervalBytes > int(cfg.Storage.SegmentMaxBytes) {
+		return Config{}, fmt.Errorf("storage.index_interval_bytes (%d) cannot be greater than storage.segment_max_bytes (%d)", cfg.Storage.IndexIntervalBytes, cfg.Storage.SegmentMaxBytes)
 	}
 
 	flushMode := strings.ToLower(cfg.Storage.FlushMode)

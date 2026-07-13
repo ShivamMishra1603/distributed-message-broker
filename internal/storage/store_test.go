@@ -13,7 +13,7 @@ import (
 func TestStore_AppendAndReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 
-	store, err := OpenStore(dir, 1024*1024, 10000, "sync", nil)
+	store, err := OpenStore(dir, 1024*1024, 10000, 4096, "sync", nil)
 	if err != nil {
 		t.Fatalf("failed to open store: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestStore_AppendAndReadRoundTrip(t *testing.T) {
 		t.Fatalf("close failed: %v", err)
 	}
 
-	recoveredStore, err := OpenStore(dir, 1024*1024, 10000, "sync", nil)
+	recoveredStore, err := OpenStore(dir, 1024*1024, 10000, 4096, "sync", nil)
 	if err != nil {
 		t.Fatalf("failed to reopen store: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestStore_Rollover(t *testing.T) {
 	dir := t.TempDir()
 
 	// Set segment max size very small (e.g. 80 bytes) so each batch triggers rollover
-	store, err := OpenStore(dir, 80, 1000, "sync", nil)
+	store, err := OpenStore(dir, 80, 1000, 4096, "sync", nil)
 	if err != nil {
 		t.Fatalf("failed to open store: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestStore_Rollover(t *testing.T) {
 func TestStore_IdempotentCloseAndErrors(t *testing.T) {
 	dir := t.TempDir()
 
-	store, err := OpenStore(dir, 1024, 1000, "sync", nil)
+	store, err := OpenStore(dir, 1024, 1000, 4096, "sync", nil)
 	if err != nil {
 		t.Fatalf("failed to open store: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestStore_IdempotentCloseAndErrors(t *testing.T) {
 func TestStore_OffsetDiscontinuityValidation(t *testing.T) {
 	dir := t.TempDir()
 
-	store1, err := OpenStore(dir, 1024, 1000, "sync", nil)
+	store1, err := OpenStore(dir, 1024, 1000, 4096, "sync", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestStore_OffsetDiscontinuityValidation(t *testing.T) {
 	}
 
 	// Open store should fail due to offset discontinuity (base 0 missing, starting with 10 but expected 0)
-	_, err = OpenStore(dir, 1024, 1000, "sync", nil)
+	_, err = OpenStore(dir, 1024, 1000, 4096, "sync", nil)
 	if err == nil {
 		t.Error("expected error opening discontinuous store, got nil")
 	}
@@ -202,7 +202,7 @@ func TestStore_BatchSizeLimits(t *testing.T) {
 	// Total encoded batch = 33 + 26 = 59 bytes.
 
 	// Open store with maxBatchBytes exactly at 59 bytes.
-	store, err := OpenStore(dir, 1024, 59, "sync", nil)
+	store, err := OpenStore(dir, 1024, 59, 4096, "sync", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestStore_BatchSizeLimits(t *testing.T) {
 func TestStore_ConcurrentReaders(t *testing.T) {
 	dir := t.TempDir()
 
-	store, err := OpenStore(dir, 1024*1024, 10000, "sync", nil)
+	store, err := OpenStore(dir, 1024*1024, 10000, 4096, "sync", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestStore_ConcurrentReaders(t *testing.T) {
 
 func TestStore_WriteFailedPoisoning(t *testing.T) {
 	dir := t.TempDir()
-	store, err := OpenStore(dir, 1024, 1000, "sync", nil)
+	store, err := OpenStore(dir, 1024, 1000, 4096, "sync", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,5 +296,192 @@ func TestStore_WriteFailedPoisoning(t *testing.T) {
 	_, err = store.Read(0, 100)
 	if !errors.Is(err, ErrStoreCorrupt) {
 		t.Errorf("expected ErrStoreCorrupt, got %v", err)
+	}
+}
+
+func TestStore_FirstIndexEntryZeroZeroAndInterval(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if len(store.activeSegment.indexEntries) != 1 {
+		t.Fatalf("expected 1 initial index entry for empty active segment, got %d", len(store.activeSegment.indexEntries))
+	}
+	first := store.activeSegment.indexEntries[0]
+	if first.RelativeOffset != 0 || first.Position != 0 {
+		t.Errorf("expected first index entry to be {0, 0}, got {%d, %d}", first.RelativeOffset, first.Position)
+	}
+
+	// Append small batch
+	_, _, err = store.Append([]model.Record{{Key: []byte("k"), Value: []byte("v")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second append should cross index interval 10 bytes and append entry
+	_, _, err = store.Append([]model.Record{{Key: []byte("k2"), Value: []byte("v2")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(store.activeSegment.indexEntries) < 2 {
+		t.Errorf("expected new index entry after crossing interval size 10, got count %d", len(store.activeSegment.indexEntries))
+	}
+}
+
+func TestStore_IndexReconstructionTruncatedAndStale(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, _ = store.Append([]model.Record{{Key: []byte("k1"), Value: []byte("v1")}})
+	_, _, _ = store.Append([]model.Record{{Key: []byte("k2"), Value: []byte("v2")}})
+	store.Close()
+
+	// 1. Truncate index file to non-12-multiple (e.g. 5 bytes)
+	idxPath := filepath.Join(dir, "00000000000000000000.index")
+	if err := os.Truncate(idxPath, 5); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reopen. Should successfully rebuild index from log
+	store2, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	if err != nil {
+		t.Fatalf("failed to reopen after truncated index: %v", err)
+	}
+	defer store2.Close()
+
+	recs, err := store2.Read(0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Errorf("expected 2 records, got %d", len(recs))
+	}
+}
+
+func TestStore_ActiveSegmentIncompleteTailTruncates(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, _ = store.Append([]model.Record{{Key: []byte("k1"), Value: []byte("v1")}})
+	store.Close()
+
+	// Append 5 incomplete tail junk bytes to active log file
+	logPath := filepath.Join(dir, "00000000000000000000.log")
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("trash")); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	// Reopen. Should truncate active segment tail cleanly
+	store2, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	if err != nil {
+		t.Fatalf("failed to reopen: %v", err)
+	}
+	defer store2.Close()
+
+	recs, err := store2.Read(0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || string(recs[0].Key) != "k1" {
+		t.Errorf("unexpected recovered records: %+v", recs)
+	}
+}
+
+func TestStore_ActiveSegmentBadCrcFails(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, _ = store.Append([]model.Record{{Key: []byte("k1"), Value: []byte("v1")}})
+	store.Close()
+
+	// Corrupt a middle byte of the log segment (e.g. CRC field byte at pos 9)
+	logPath := filepath.Join(dir, "00000000000000000000.log")
+	f, err := os.OpenFile(logPath, os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Write bad value to pos 9
+	if _, err := f.WriteAt([]byte{0xFF}, 9); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	// Reopen should fail because active segment contains fatal corruption in fully-written batch
+	_, err = OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	if err == nil {
+		t.Error("expected startup to fail for active segment bad CRC, got nil")
+	}
+}
+
+func TestStore_CrossSegmentRead(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a store with very small segmentMaxBytes so it rolls over
+	store, err := OpenStore(dir, 65, 1000, 10, "sync", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1 record batch is ~60 bytes, so each append will trigger rollover
+	_, _, _ = store.Append([]model.Record{{Key: []byte("k1"), Value: []byte("v1")}})
+	_, _, _ = store.Append([]model.Record{{Key: []byte("k2"), Value: []byte("v2")}})
+	_, _, _ = store.Append([]model.Record{{Key: []byte("k3"), Value: []byte("v3")}})
+
+	if len(store.segments) < 3 {
+		t.Errorf("expected multiple segments, got %d", len(store.segments))
+	}
+
+	// Fetch starting from 0, crossing all segment boundaries
+	recs, err := store.Read(0, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(recs) != 3 {
+		t.Fatalf("expected 3 records across segments, got %d", len(recs))
+	}
+	if string(recs[0].Key) != "k1" || string(recs[1].Key) != "k2" || string(recs[2].Key) != "k3" {
+		t.Errorf("unexpected record contents: %+v", recs)
+	}
+}
+
+func TestStore_OrphanIndexFileIgnored(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write orphan index file
+	orphanPath := filepath.Join(dir, "00000000000000009999.index")
+	if err := os.WriteFile(orphanPath, make([]byte, 24), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	// Verify the segment list doesn't include the orphan
+	for _, seg := range store.segments {
+		if seg.baseOffset == 9999 {
+			t.Error("expected orphan segment to be ignored, but it was loaded")
+		}
 	}
 }

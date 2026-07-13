@@ -19,7 +19,7 @@ func TestLog_AppendAndReadBasic(t *testing.T) {
 	now := time.Now().UTC()
 	clock := mockClock(now)
 
-	log, err := NewLog("test-topic", 0, dir, 1024*1024, 512*1024, "sync", clock)
+	log, err := NewLog("test-topic", 0, dir, 1024*1024, 512*1024, 4096, "sync", clock)
 	if err != nil {
 		t.Fatalf("failed to create log: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestLog_AppendAndReadBasic(t *testing.T) {
 
 func TestLog_DeepCopySafety(t *testing.T) {
 	dir := t.TempDir()
-	log, err := NewLog("test-topic", 0, dir, 1024*1024, 512*1024, "sync", nil)
+	log, err := NewLog("test-topic", 0, dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	if err != nil {
 		t.Fatalf("failed to create log: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestLog_DeepCopySafety(t *testing.T) {
 
 func TestLog_ReadByteLimits(t *testing.T) {
 	dir := t.TempDir()
-	log, err := NewLog("test-topic", 0, dir, 1024*1024, 512*1024, "sync", nil)
+	log, err := NewLog("test-topic", 0, dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	if err != nil {
 		t.Fatalf("failed to create log: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestLog_ReadByteLimits(t *testing.T) {
 
 func TestLog_ConcurrentAppends(t *testing.T) {
 	dir := t.TempDir()
-	log, err := NewLog("test-topic", 0, dir, 1024*1024, 512*1024, "sync", nil)
+	log, err := NewLog("test-topic", 0, dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	if err != nil {
 		t.Fatalf("failed to create log: %v", err)
 	}

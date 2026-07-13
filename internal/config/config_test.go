@@ -154,6 +154,20 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			wantErr: "storage.segment_max_bytes",
 		},
 		{
+			name: "index interval bytes <= 0",
+			setup: func(path string) {
+				t.Setenv("BROKER_INDEX_INTERVAL_BYTES", "0")
+			},
+			wantErr: "storage.index_interval_bytes must be positive",
+		},
+		{
+			name: "index interval bytes greater than segment max bytes",
+			setup: func(path string) {
+				t.Setenv("BROKER_INDEX_INTERVAL_BYTES", "200000000")
+			},
+			wantErr: "cannot be greater than storage.segment_max_bytes",
+		},
+		{
 			name: "invalid flush mode",
 			setup: func(path string) {
 				t.Setenv("BROKER_FLUSH_MODE", "invalid_mode")

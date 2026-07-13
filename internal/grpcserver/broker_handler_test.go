@@ -59,14 +59,15 @@ func TestBrokerServer_ProduceAndFetch(t *testing.T) {
 	dir := t.TempDir()
 
 	storageCfg := config.StorageConfig{
-		DataDirectory:   dir,
-		MaxRecordBytes:  1000,
-		MaxBatchBytes:   5000,
-		SegmentMaxBytes: 10000,
-		FlushMode:       "sync",
+		DataDirectory:      dir,
+		MaxRecordBytes:     1000,
+		MaxBatchBytes:      5000,
+		SegmentMaxBytes:    10000,
+		IndexIntervalBytes: 4096,
+		FlushMode:          "sync",
 	}
 
-	mgr, err := topic.NewManager(dir, storageCfg.SegmentMaxBytes, int64(storageCfg.MaxBatchBytes), storageCfg.FlushMode, nil)
+	mgr, err := topic.NewManager(dir, storageCfg.SegmentMaxBytes, int64(storageCfg.MaxBatchBytes), storageCfg.IndexIntervalBytes, storageCfg.FlushMode, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,14 +154,15 @@ func TestBrokerServer_LimitsAndFailures(t *testing.T) {
 	dir := t.TempDir()
 
 	storageCfg := config.StorageConfig{
-		DataDirectory:   dir,
-		MaxRecordBytes:  10,
-		MaxBatchBytes:   70, // single encoded batch for 1 record is ~60 bytes
-		SegmentMaxBytes: 1000,
-		FlushMode:       "sync",
+		DataDirectory:      dir,
+		MaxRecordBytes:     10,
+		MaxBatchBytes:      70, // single encoded batch for 1 record is ~60 bytes
+		SegmentMaxBytes:    1000,
+		IndexIntervalBytes: 4096,
+		FlushMode:          "sync",
 	}
 
-	mgr, err := topic.NewManager(dir, storageCfg.SegmentMaxBytes, int64(storageCfg.MaxBatchBytes), storageCfg.FlushMode, nil)
+	mgr, err := topic.NewManager(dir, storageCfg.SegmentMaxBytes, int64(storageCfg.MaxBatchBytes), storageCfg.IndexIntervalBytes, storageCfg.FlushMode, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -23,6 +23,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Broker, error) {
 		cfg.Storage.DataDirectory,
 		cfg.Storage.SegmentMaxBytes,
 		int64(cfg.Storage.MaxBatchBytes),
+		cfg.Storage.IndexIntervalBytes,
 		cfg.Storage.FlushMode,
 		logger,
 	)

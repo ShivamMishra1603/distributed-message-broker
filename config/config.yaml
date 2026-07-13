@@ -7,6 +7,7 @@ storage:
   max_record_bytes: 1048576
   max_batch_bytes: 5242880
   segment_max_bytes: 134217728
+  index_interval_bytes: 4096
   flush_mode: "sync"
 
 observability:

@@ -71,28 +71,30 @@ type TopicsMetadata struct {
 
 // Manager orchestrates topic metadata and partition lifetime on disk.
 type Manager struct {
-	mu              sync.RWMutex
-	topics          map[string]*Topic
-	dataDir         string
-	segmentMaxBytes int64
-	maxBatchBytes   int64
-	flushMode       string
-	logger          *slog.Logger
+	mu                 sync.RWMutex
+	topics             map[string]*Topic
+	dataDir            string
+	segmentMaxBytes    int64
+	maxBatchBytes      int64
+	indexIntervalBytes int
+	flushMode          string
+	logger             *slog.Logger
 }
 
 // NewManager loads metadata, reconstructs partitions from disk, and handles directory mappings.
-func NewManager(dataDir string, segmentMaxBytes int64, maxBatchBytes int64, flushMode string, logger *slog.Logger) (*Manager, error) {
+func NewManager(dataDir string, segmentMaxBytes int64, maxBatchBytes int64, indexIntervalBytes int, flushMode string, logger *slog.Logger) (*Manager, error) {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	}
 
 	mgr := &Manager{
-		topics:          make(map[string]*Topic),
-		dataDir:         dataDir,
-		segmentMaxBytes: segmentMaxBytes,
-		maxBatchBytes:   maxBatchBytes,
-		flushMode:       flushMode,
-		logger:          logger,
+		topics:             make(map[string]*Topic),
+		dataDir:            dataDir,
+		segmentMaxBytes:    segmentMaxBytes,
+		maxBatchBytes:      maxBatchBytes,
+		indexIntervalBytes: indexIntervalBytes,
+		flushMode:          flushMode,
+		logger:             logger,
 	}
 
 	// 1. Read topics.json if exists
@@ -138,7 +140,7 @@ func NewManager(dataDir string, segmentMaxBytes int64, maxBatchBytes int64, flus
 					return nil, fmt.Errorf("metadata references missing partition directory: %s", pDir)
 				}
 
-				pLog, err := partition.NewLog(name, uint32(i), dataDir, segmentMaxBytes, maxBatchBytes, flushMode, nil)
+				pLog, err := partition.NewLog(name, uint32(i), dataDir, segmentMaxBytes, maxBatchBytes, indexIntervalBytes, flushMode, nil)
 				if err != nil {
 					for _, p := range partitions {
 						if p != nil {
@@ -192,7 +194,7 @@ func (m *Manager) CreateTopic(name string, partitionCount int, retention Retenti
 		pDir := filepath.Join(m.dataDir, "topics", name, fmt.Sprintf("partition-%d", i))
 		createdDirs = append(createdDirs, pDir)
 
-		partitions[i], err = partition.NewLog(name, uint32(i), m.dataDir, m.segmentMaxBytes, m.maxBatchBytes, m.flushMode, nil)
+		partitions[i], err = partition.NewLog(name, uint32(i), m.dataDir, m.segmentMaxBytes, m.maxBatchBytes, m.indexIntervalBytes, m.flushMode, nil)
 		if err != nil {
 			// Rollback partition logs
 			for _, p := range partitions {

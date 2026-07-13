@@ -18,7 +18,7 @@ import (
 func TestServer_LifecycleAndHealth(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	dir := t.TempDir()
-	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestServer_LifecycleAndHealth(t *testing.T) {
 func TestServer_ShutdownTimeoutReturnsError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	dir := t.TempDir()
-	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestServer_ShutdownTimeoutReturnsError(t *testing.T) {
 func TestServer_BindError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	dir := t.TempDir()
-	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

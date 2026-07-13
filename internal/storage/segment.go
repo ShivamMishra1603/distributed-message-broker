@@ -1,25 +1,41 @@
 package storage
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 )
 
-type Segment struct {
-	baseOffset uint64
-	nextOffset uint64 // Track offset after last record in this segment
-	size       int64
-	path       string
-	file       *os.File
-	active     bool
+type IndexEntry struct {
+	RelativeOffset uint32
+	Position       uint64
 }
 
-// NewSegment constructs or opens a segment file on disk.
+type Segment struct {
+	baseOffset          uint64
+	nextOffset          uint64
+	size                int64
+	path                string
+	indexPath           string
+	file                *os.File
+	indexFile           *os.File
+	indexEntries        []IndexEntry
+	lastIndexedPosition int64
+	indexSize           int64
+	indexDirty          bool
+	active              bool
+}
+
+// NewSegment constructs or opens a segment log file and its corresponding sparse index file.
 func NewSegment(dir string, baseOffset uint64, active bool) (*Segment, error) {
 	filename := fmt.Sprintf("%020d.log", baseOffset)
 	path := filepath.Join(dir, filename)
+
+	indexFilename := fmt.Sprintf("%020d.index", baseOffset)
+	indexPath := filepath.Join(dir, indexFilename)
 
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o640)
 	if err != nil {
@@ -32,17 +48,34 @@ func NewSegment(dir string, baseOffset uint64, active bool) (*Segment, error) {
 		return nil, fmt.Errorf("failed to stat segment file %q: %w", path, err)
 	}
 
+	indexFile, err := os.OpenFile(indexPath, os.O_CREATE|os.O_RDWR, 0o640)
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("failed to open index file %q: %w", indexPath, err)
+	}
+
+	idxInfo, err := indexFile.Stat()
+	if err != nil {
+		file.Close()
+		indexFile.Close()
+		return nil, fmt.Errorf("failed to stat index file %q: %w", indexPath, err)
+	}
+
 	return &Segment{
-		baseOffset: baseOffset,
-		nextOffset: baseOffset,
-		size:       info.Size(),
-		path:       path,
-		file:       file,
-		active:     active,
+		baseOffset:          baseOffset,
+		nextOffset:          baseOffset,
+		size:                info.Size(),
+		path:                path,
+		indexPath:           indexPath,
+		file:                file,
+		indexFile:           indexFile,
+		indexSize:           idxInfo.Size(),
+		lastIndexedPosition: -1,
+		active:              active,
 	}, nil
 }
 
-// ReadAt reads length bytes starting from the given position.
+// ReadAt reads length bytes starting from the given position in the log file.
 // It is position-independent and safe for concurrent reads.
 func (s *Segment) ReadAt(buf []byte, position int64) (int, error) {
 	n, err := s.file.ReadAt(buf, position)
@@ -69,18 +102,122 @@ func (s *Segment) Append(data []byte) (position int64, err error) {
 	return startPos, nil
 }
 
+// ReadIndexEntries reads and decodes the 12-byte entries from the index file.
+// It performs validation on offset/position ordering.
+func (s *Segment) ReadIndexEntries() ([]IndexEntry, error) {
+	if s.indexSize == 0 {
+		return []IndexEntry{}, nil
+	}
+
+	if s.indexSize%12 != 0 {
+		return nil, fmt.Errorf("index size %d is not a multiple of 12 bytes", s.indexSize)
+	}
+
+	numEntries := s.indexSize / 12
+	entries := make([]IndexEntry, numEntries)
+	buf := make([]byte, s.indexSize)
+
+	if _, err := s.indexFile.ReadAt(buf, 0); err != nil && err != io.EOF {
+		return nil, fmt.Errorf("failed to read index entries from %q: %w", s.indexPath, err)
+	}
+
+	var lastRel uint32 = 0
+	var lastPos uint64 = 0
+
+	for i := int64(0); i < numEntries; i++ {
+		offset := i * 12
+		rel := binary.BigEndian.Uint32(buf[offset : offset+4])
+		pos := binary.BigEndian.Uint64(buf[offset+4 : offset+12])
+
+		// Basic ordering checks
+		if i > 0 {
+			if rel <= lastRel {
+				return nil, fmt.Errorf("non-increasing relative offset %d <= %d in index %q", rel, lastRel, s.indexPath)
+			}
+			if pos <= lastPos {
+				return nil, fmt.Errorf("non-increasing position %d <= %d in index %q", pos, lastPos, s.indexPath)
+			}
+		} else {
+			// First entry validation for non-empty index
+			if rel != 0 || pos != 0 {
+				return nil, fmt.Errorf("first index entry must be {0, 0}, got {%d, %d} in %q", rel, pos, s.indexPath)
+			}
+		}
+
+		// Pos sanity check against math limits
+		if pos > math.MaxInt64 {
+			return nil, fmt.Errorf("position %d overflows max int64 in index %q", pos, s.indexPath)
+		}
+
+		entries[i] = IndexEntry{
+			RelativeOffset: rel,
+			Position:       pos,
+		}
+
+		lastRel = rel
+		lastPos = pos
+	}
+
+	return entries, nil
+}
+
+// AppendIndexEntry appends a 12-byte index entry to the index file.
+// Store.mu must protect this operation and s.indexSize.
+func (s *Segment) AppendIndexEntry(entry IndexEntry) error {
+	buf := make([]byte, 12)
+	binary.BigEndian.PutUint32(buf[0:4], entry.RelativeOffset)
+	binary.BigEndian.PutUint64(buf[4:12], entry.Position)
+
+	n, err := s.indexFile.WriteAt(buf, s.indexSize)
+	if err != nil {
+		return fmt.Errorf("failed to append to index file %q: %w", s.indexPath, err)
+	}
+	if n != 12 {
+		return fmt.Errorf("short write to index file %q: wrote %d of 12 bytes: %w", s.indexPath, n, io.ErrShortWrite)
+	}
+
+	s.indexSize += 12
+	s.indexEntries = append(s.indexEntries, entry)
+	s.lastIndexedPosition = int64(entry.Position)
+	s.indexDirty = true
+
+	return nil
+}
+
 // Flush forces writes to disk.
 func (s *Segment) Flush() error {
 	if err := s.file.Sync(); err != nil {
 		return fmt.Errorf("failed to sync segment file %q: %w", s.path, err)
 	}
+	if err := s.FlushIndex(); err != nil {
+		return err
+	}
 	return nil
 }
 
-// Close closes the file handle.
+// FlushIndex syncs index file changes to disk.
+func (s *Segment) FlushIndex() error {
+	if s.indexDirty {
+		if err := s.indexFile.Sync(); err != nil {
+			return fmt.Errorf("failed to sync index file %q: %w", s.indexPath, err)
+		}
+		s.indexDirty = false
+	}
+	return nil
+}
+
+// Close closes both file handles.
 func (s *Segment) Close() error {
+	var errs []error
 	if err := s.file.Close(); err != nil {
-		return fmt.Errorf("failed to close segment file %q: %w", s.path, err)
+		errs = append(errs, err)
+	}
+	if err := s.indexFile.Close(); err != nil {
+		errs = append(errs, err)
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to close segment handles: %v", errs)
 	}
 	return nil
 }

@@ -73,6 +73,51 @@ func TestSegment_AppendAndReadAt(t *testing.T) {
 	}
 }
 
+func TestSegment_IndexAppendingAndValidation(t *testing.T) {
+	dir := t.TempDir()
+
+	seg, err := NewSegment(dir, 1000, true)
+	if err != nil {
+		t.Fatalf("failed to create segment: %v", err)
+	}
+	defer seg.Close()
+
+	// 1. First entry must be {0, 0}
+	err = seg.AppendIndexEntry(IndexEntry{RelativeOffset: 0, Position: 0})
+	if err != nil {
+		t.Fatalf("failed to append first index: %v", err)
+	}
+
+	// 2. Append normal entries
+	err = seg.AppendIndexEntry(IndexEntry{RelativeOffset: 10, Position: 100})
+	if err != nil {
+		t.Fatalf("failed to append index: %v", err)
+	}
+
+	err = seg.AppendIndexEntry(IndexEntry{RelativeOffset: 20, Position: 300})
+	if err != nil {
+		t.Fatalf("failed to append index: %v", err)
+	}
+
+	// 3. Read back and check ordering validation
+	entries, err := seg.ReadIndexEntries()
+	if err != nil {
+		t.Fatalf("failed to read index entries: %v", err)
+	}
+
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(entries))
+	}
+
+	if entries[1].RelativeOffset != 10 || entries[1].Position != 100 {
+		t.Errorf("unexpected index entry: %+v", entries[1])
+	}
+
+	if entries[2].RelativeOffset != 20 || entries[2].Position != 300 {
+		t.Errorf("unexpected index entry: %+v", entries[2])
+	}
+}
+
 func TestSegment_ConcurrentReaders(t *testing.T) {
 	dir := t.TempDir()
 
@@ -97,7 +142,6 @@ func TestSegment_ConcurrentReaders(t *testing.T) {
 		go func(readerID int) {
 			defer wg.Done()
 			for j := 0; j < iterations; j++ {
-				// Alternately read from position 0 and position 13 without locking segment
 				if (readerID+j)%2 == 0 {
 					buf := make([]byte, len(payload1))
 					_, err := seg.ReadAt(buf, 0)

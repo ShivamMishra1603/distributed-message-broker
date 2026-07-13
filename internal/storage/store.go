@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,10 +18,11 @@ import (
 )
 
 var (
-	ErrStoreClosed      = errors.New("store is closed")
-	ErrOffsetOutOfRange = errors.New("offset out of range")
-	ErrBatchTooLarge    = errors.New("batch size exceeds maximum configured limit")
-	ErrStoreCorrupt     = errors.New("store is in a corrupted state due to a previous I/O failure")
+	ErrStoreClosed         = errors.New("store is closed")
+	ErrOffsetOutOfRange    = errors.New("offset out of range")
+	ErrBatchTooLarge       = errors.New("batch size exceeds maximum configured limit")
+	ErrStoreCorrupt        = errors.New("store is in a corrupted state due to a previous I/O failure")
+	ErrIndexOffsetOverflow = errors.New("index relative offset overflows uint32 limit")
 )
 
 type BatchLocation struct {
@@ -31,25 +34,25 @@ type BatchLocation struct {
 }
 
 type Store struct {
-	dir             string
-	segmentMaxBytes int64
-	maxBatchBytes   int64
-	flushMode       string
-	clock           model.Clock
+	dir                string
+	segmentMaxBytes    int64
+	maxBatchBytes      int64
+	indexIntervalBytes int
+	flushMode          string
+	clock              model.Clock
 
 	mu             sync.RWMutex
 	closed         bool
 	writeFailed    bool
 	segments       []*Segment
 	activeSegment  *Segment
-	scanTable      []BatchLocation
 	logEndOffset   uint64
 	earliestOffset uint64
 }
 
 // OpenStore opens a partition store directory, scans and validates all log files,
-// reconstructs offset states and the in-memory scan table, and opens the active segment.
-func OpenStore(dir string, segmentMaxBytes int64, maxBatchBytes int64, flushMode string, clock model.Clock) (*Store, error) {
+// reconstructs offset states, validates/rebuilds sparse indexes, and opens the active segment.
+func OpenStore(dir string, segmentMaxBytes int64, maxBatchBytes int64, indexIntervalBytes int, flushMode string, clock model.Clock) (*Store, error) {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
@@ -59,10 +62,15 @@ func OpenStore(dir string, segmentMaxBytes int64, maxBatchBytes int64, flushMode
 		return nil, fmt.Errorf("failed to create partition directory %q: %w", dir, err)
 	}
 
-	// 1. Scan for log files
+	// Remove any abandoned index temp files
 	files, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read partition directory %q: %w", dir, err)
+	}
+	for _, f := range files {
+		if !f.IsDir() && strings.HasSuffix(f.Name(), ".index.tmp") {
+			_ = os.Remove(filepath.Join(dir, f.Name()))
+		}
 	}
 
 	var baseOffsets []uint64
@@ -89,18 +97,18 @@ func OpenStore(dir string, segmentMaxBytes int64, maxBatchBytes int64, flushMode
 	})
 
 	store := &Store{
-		dir:             dir,
-		segmentMaxBytes: segmentMaxBytes,
-		maxBatchBytes:   maxBatchBytes,
-		flushMode:       strings.ToLower(flushMode),
-		clock:           clock,
-		segments:        make([]*Segment, 0),
-		scanTable:       make([]BatchLocation, 0),
-		earliestOffset:  0,
-		logEndOffset:    0,
+		dir:                dir,
+		segmentMaxBytes:    segmentMaxBytes,
+		maxBatchBytes:      maxBatchBytes,
+		indexIntervalBytes: indexIntervalBytes,
+		flushMode:          strings.ToLower(flushMode),
+		clock:              clock,
+		segments:           make([]*Segment, 0),
+		earliestOffset:     0,
+		logEndOffset:       0,
 	}
 
-	// 2. Load and validate segments
+	// Load and validate segments
 	expectedNextOffset := uint64(0)
 	if len(baseOffsets) > 0 {
 		expectedNextOffset = baseOffsets[0]
@@ -121,11 +129,11 @@ func OpenStore(dir string, segmentMaxBytes int64, maxBatchBytes int64, flushMode
 		}
 		store.segments = append(store.segments, seg)
 
-		// Validate all batches in segment and construct scan table
-		nextOffset, err := store.scanAndValidateSegment(seg)
+		// Recover segment (truncating active tail if needed) and check index
+		nextOffset, err := store.recoverSegment(seg, isActive)
 		if err != nil {
 			store.closeAllOpenSegments()
-			return nil, fmt.Errorf("segment %q validation failed: %w", seg.path, err)
+			return nil, err
 		}
 		seg.nextOffset = nextOffset
 		expectedNextOffset = nextOffset
@@ -143,6 +151,11 @@ func OpenStore(dir string, segmentMaxBytes int64, maxBatchBytes int64, flushMode
 		store.activeSegment = seg
 		store.logEndOffset = 0
 		store.earliestOffset = 0
+
+		// Write initial {0, 0} index entry for empty active segment
+		if err := seg.AppendIndexEntry(IndexEntry{RelativeOffset: 0, Position: 0}); err != nil {
+			return nil, fmt.Errorf("failed to write initial index entry: %w", err)
+		}
 	} else {
 		store.activeSegment = store.segments[len(store.segments)-1]
 	}
@@ -193,6 +206,13 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 		return 0, 0, ErrBatchTooLarge
 	}
 
+	// Verify Relative Offset limit
+	relative := base - s.activeSegment.baseOffset
+	if relative > math.MaxUint32 {
+		s.writeFailed = true
+		return 0, 0, ErrIndexOffsetOverflow
+	}
+
 	// 3. Roll segment if boundary exceeded
 	if s.activeSegment.Size() > 0 && s.activeSegment.Size()+batchSize > s.segmentMaxBytes {
 		if err := s.activeSegment.Flush(); err != nil {
@@ -208,6 +228,12 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 		}
 		s.segments = append(s.segments, newSeg)
 		s.activeSegment = newSeg
+
+		// First entry in the new segment is always {0, 0}
+		if err := newSeg.AppendIndexEntry(IndexEntry{RelativeOffset: 0, Position: 0}); err != nil {
+			s.writeFailed = true
+			return 0, 0, err
+		}
 	}
 
 	// 4. Append to active segment
@@ -217,7 +243,24 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 		return 0, 0, err
 	}
 
-	// 5. Apply Flush Policy
+	// 5. Append index entry if required
+	shouldIndex := len(s.activeSegment.indexEntries) == 0 ||
+		pos-s.activeSegment.lastIndexedPosition >= int64(s.indexIntervalBytes)
+
+	if shouldIndex {
+		entry := IndexEntry{
+			RelativeOffset: uint32(relative),
+			Position:       uint64(pos),
+		}
+		if err := s.activeSegment.AppendIndexEntry(entry); err != nil {
+			// Derived index file failures do not poison log offsets, but log warning
+			// and keep in-memory indexEntries valid so read indexing still functions.
+			// However, to ensure durability guarantees, we can return the error.
+			return 0, 0, fmt.Errorf("failed to write sparse index: %w", err)
+		}
+	}
+
+	// 6. Apply Flush Policy
 	if s.flushMode == "sync" {
 		if err := s.activeSegment.Flush(); err != nil {
 			s.writeFailed = true
@@ -225,17 +268,7 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 		}
 	}
 
-	// 6. Record Batch Location
 	last := base + uint64(len(records)) - 1
-	loc := BatchLocation{
-		BaseOffset: base,
-		LastOffset: last,
-		Position:   pos,
-		Length:     uint32(batchSize),
-		SegmentRef: s.activeSegment,
-	}
-	s.scanTable = append(s.scanTable, loc)
-
 	s.logEndOffset = last + 1
 	s.activeSegment.nextOffset = s.logEndOffset
 
@@ -267,54 +300,85 @@ func (s *Store) Read(offset uint64, maxBytes int) ([]model.StoredRecord, error) 
 		return []model.StoredRecord{}, nil
 	}
 
-	// 1. Locate starting batch using binary search on scanTable
-	startIdx := sort.Search(len(s.scanTable), func(i int) bool {
-		return s.scanTable[i].LastOffset >= offset
+	// 1. Locate starting segment
+	segIdx := sort.Search(len(s.segments), func(i int) bool {
+		return s.segments[i].nextOffset > offset
 	})
-
-	if startIdx >= len(s.scanTable) {
+	if segIdx >= len(s.segments) {
 		return nil, ErrOffsetOutOfRange
 	}
 
 	var result []model.StoredRecord
 	accumulatedBytes := 0
+	currOffset := offset
 
-	// 2. Read matching records sequentially across batches/segments
-	for i := startIdx; i < len(s.scanTable); i++ {
-		loc := s.scanTable[i]
+	// 2. Traverse segments sequentially (cross-segment reads)
+	for i := segIdx; i < len(s.segments); i++ {
+		seg := s.segments[i]
 
-		buf := make([]byte, loc.Length)
-		_, err := loc.SegmentRef.ReadAt(buf, loc.Position)
-		if err != nil && err != io.EOF {
-			return nil, err
+		// Binary search inside segment index to locate closest starting position
+		idx := sort.Search(len(seg.indexEntries), func(j int) bool {
+			return seg.baseOffset+uint64(seg.indexEntries[j].RelativeOffset) > currOffset
+		})
+
+		startPos := int64(0)
+		if idx > 0 {
+			startPos = int64(seg.indexEntries[idx-1].Position)
 		}
 
-		recs, err := DecodeBatch(buf)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode batch at offset %d: %w", loc.BaseOffset, err)
-		}
-
-		for _, r := range recs {
-			if r.Offset < offset {
-				continue
+		// Scan forward from indexed file position
+		for startPos < seg.Size() {
+			if startPos+9 > seg.Size() {
+				return nil, fmt.Errorf("truncated batch header at position %d inside segment %q", startPos, seg.path)
 			}
 
-			// Size includes key, value, headers, and 16 bytes overhead
-			size := recordSize(r)
-
-			if len(result) > 0 && accumulatedBytes+size > maxBytes {
-				return result, nil
+			prefixBuf := make([]byte, 9)
+			if _, err := seg.ReadAt(prefixBuf, startPos); err != nil {
+				return nil, err
 			}
 
-			result = append(result, r)
-			accumulatedBytes += size
+			batchLength := binary.BigEndian.Uint32(prefixBuf[5:9])
+			totalBatchSize := int64(9) + int64(batchLength)
+
+			if startPos+totalBatchSize > seg.Size() {
+				return nil, fmt.Errorf("truncated batch payload at position %d inside segment %q", startPos, seg.path)
+			}
+
+			batchBuf := make([]byte, totalBatchSize)
+			if _, err := seg.ReadAt(batchBuf, startPos); err != nil {
+				return nil, err
+			}
+
+			recs, err := DecodeBatch(batchBuf)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decode batch at offset %d inside segment %q: %w", recs[0].Offset, seg.path, err)
+			}
+
+			for _, r := range recs {
+				if r.Offset < currOffset {
+					continue
+				}
+
+				size := recordSize(r)
+
+				// Check limit boundaries (Milestone 2 rule: return first record anyway to guarantee progress)
+				if len(result) > 0 && accumulatedBytes+size > maxBytes {
+					return result, nil
+				}
+
+				result = append(result, r)
+				accumulatedBytes += size
+				currOffset = r.Offset + 1
+			}
+
+			startPos += totalBatchSize
 		}
 	}
 
 	return result, nil
 }
 
-// Close gracefully flushes the active segment, closes all segment files, and sets store state.
+// Close gracefully flushes and closes all descriptors.
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -358,14 +422,22 @@ func (s *Store) EarliestOffset() uint64 {
 	return s.earliestOffset
 }
 
-func (s *Store) scanAndValidateSegment(seg *Segment) (uint64, error) {
+func (s *Store) recoverSegment(seg *Segment, active bool) (uint64, error) {
 	var currentPos int64 = 0
 	expectedOffset := seg.baseOffset
+	var validSize int64 = 0
 
 	for currentPos < seg.size {
-		// Minimum size to read magic, version, and batch length prefix is 9 bytes
+		// EOF check inside prefix
 		if currentPos+9 > seg.size {
-			return 0, fmt.Errorf("truncated batch header in %q", seg.path)
+			if active {
+				// Incomplete prefix tail truncation
+				if err := s.truncateLog(seg, validSize); err != nil {
+					return 0, err
+				}
+				break
+			}
+			return 0, fmt.Errorf("incomplete batch header in closed segment %q", seg.path)
 		}
 
 		prefixBuf := make([]byte, 9)
@@ -377,27 +449,34 @@ func (s *Store) scanAndValidateSegment(seg *Segment) (uint64, error) {
 		var magic [4]byte
 		copy(magic[:], prefixBuf[0:4])
 		if magic != MagicBytes {
-			return 0, ErrMalformedMagic
+			return 0, fmt.Errorf("magic byte mismatch inside %q: %w", seg.path, ErrMalformedMagic)
 		}
 
 		// Verify Version
 		version := prefixBuf[4]
 		if version != FormatVersion1 {
-			return 0, ErrUnsupportedVersion
+			return 0, fmt.Errorf("unsupported format version inside %q: %w", seg.path, ErrUnsupportedVersion)
 		}
 
 		batchLength := binary.BigEndian.Uint32(prefixBuf[5:9])
 		if batchLength < MinimumBatchRemainder {
-			return 0, fmt.Errorf("%w: batch length %d too small", ErrCorruptBatch, batchLength)
+			return 0, fmt.Errorf("%w: batch length %d too small in segment %q", ErrCorruptBatch, batchLength, seg.path)
 		}
 
 		totalBatchSize := int64(MagicSize+VersionSize+BatchLengthSize) + int64(batchLength)
 		if totalBatchSize > s.maxBatchBytes {
-			return 0, fmt.Errorf("on-disk batch size %d exceeds configured max_batch_bytes %d: %w", totalBatchSize, s.maxBatchBytes, ErrBatchTooLarge)
+			return 0, fmt.Errorf("batch size %d exceeds config limits %d: %w in %q", totalBatchSize, s.maxBatchBytes, ErrBatchTooLarge, seg.path)
 		}
+
+		// Incomplete batch payload truncation at EOF
 		if currentPos+totalBatchSize > seg.size {
-			// Milestone 3: Return error on incomplete tails (Milestone 4 will truncate)
-			return 0, fmt.Errorf("truncated batch payload in %q", seg.path)
+			if active {
+				if err := s.truncateLog(seg, validSize); err != nil {
+					return 0, err
+				}
+				break
+			}
+			return 0, fmt.Errorf("incomplete batch payload inside closed segment %q", seg.path)
 		}
 
 		// Read complete batch payload
@@ -406,44 +485,221 @@ func (s *Store) scanAndValidateSegment(seg *Segment) (uint64, error) {
 			return 0, err
 		}
 
-		// Decode batch to validate CRC and record details
+		// Decode batch to validate CRC and details
 		recs, err := DecodeBatch(batchBuf)
 		if err != nil {
-			return 0, fmt.Errorf("corrupt batch decode failure: %w", err)
+			return 0, fmt.Errorf("corrupt batch decode failed inside %q: %w", seg.path, err)
 		}
 
 		if len(recs) == 0 {
-			return 0, fmt.Errorf("segment contains empty record batch")
+			return 0, fmt.Errorf("segment %q contains empty record batch", seg.path)
 		}
 
-		// Assert first record offset matches expected
+		// Verify offset continuity
 		if recs[0].Offset != expectedOffset {
-			return 0, fmt.Errorf("offset discontinuity: expected offset %d, got %d", expectedOffset, recs[0].Offset)
+			return 0, fmt.Errorf("offset discontinuity in %q: expected offset %d, got %d", seg.path, expectedOffset, recs[0].Offset)
 		}
 
-		// Verify contiguous offsets inside the batch
 		for j, r := range recs {
 			expected := expectedOffset + uint64(j)
 			if r.Offset != expected {
-				return 0, fmt.Errorf("offset discontinuity inside batch: expected %d, got %d", expected, r.Offset)
+				return 0, fmt.Errorf("offset discontinuity inside batch in %q: expected %d, got %d", seg.path, expected, r.Offset)
 			}
 		}
 
-		lastOffset := expectedOffset + uint64(len(recs)) - 1
-		loc := BatchLocation{
-			BaseOffset: expectedOffset,
-			LastOffset: lastOffset,
-			Position:   currentPos,
-			Length:     uint32(totalBatchSize),
-			SegmentRef: seg,
-		}
-		s.scanTable = append(s.scanTable, loc)
-
-		expectedOffset = lastOffset + 1
+		expectedOffset = expectedOffset + uint64(len(recs))
 		currentPos += totalBatchSize
+		validSize = currentPos
+	}
+
+	// Verify loaded index file validity
+	indexValid := false
+	entries, err := seg.ReadIndexEntries()
+	if err == nil {
+		indexValid = s.validateIndexEntries(seg, entries, validSize)
+	}
+
+	if indexValid {
+		seg.indexEntries = entries
+		if len(entries) > 0 {
+			seg.lastIndexedPosition = int64(entries[len(entries)-1].Position)
+		}
+	} else {
+		// Rebuild index file atomically
+		if err := s.rebuildIndex(seg, validSize); err != nil {
+			return 0, err
+		}
 	}
 
 	return expectedOffset, nil
+}
+
+func (s *Store) validateIndexEntries(seg *Segment, entries []IndexEntry, validLogSize int64) bool {
+	if len(entries) == 0 {
+		return validLogSize == 0 // empty segment has empty index
+	}
+
+	// First entry must be {0, 0}
+	if entries[0].RelativeOffset != 0 || entries[0].Position != 0 {
+		return false
+	}
+
+	var lastRel uint32 = 0
+	var lastPos uint64 = 0
+
+	for i, entry := range entries {
+		if i > 0 {
+			if entry.RelativeOffset <= lastRel {
+				return false
+			}
+			if entry.Position <= lastPos {
+				return false
+			}
+		}
+
+		if int64(entry.Position) >= validLogSize {
+			return false // points past log file size
+		}
+
+		// Read batch prefix at position to verify it matches absolute offset
+		prefixBuf := make([]byte, 9)
+		if _, err := seg.ReadAt(prefixBuf, int64(entry.Position)); err != nil {
+			return false
+		}
+
+		// Verify Magic
+		var magic [4]byte
+		copy(magic[:], prefixBuf[0:4])
+		if magic != MagicBytes {
+			return false
+		}
+
+		// Verify expected absolute offset
+		expectedAbsOffset := seg.baseOffset + uint64(entry.RelativeOffset)
+		// Fetch batch details from log position to verify expectedAbsOffset matches actual batch Base Offset
+		if int64(entry.Position)+33 > validLogSize {
+			return false
+		}
+		headerBuf := make([]byte, 33)
+		if _, err := seg.ReadAt(headerBuf, int64(entry.Position)); err != nil {
+			return false
+		}
+		batchBaseOffset := binary.BigEndian.Uint64(headerBuf[13:21])
+		if batchBaseOffset != expectedAbsOffset {
+			return false
+		}
+
+		lastRel = entry.RelativeOffset
+		lastPos = entry.Position
+	}
+
+	return true
+}
+
+func (s *Store) rebuildIndex(seg *Segment, validLogSize int64) error {
+	tmpPath := seg.indexPath + ".tmp"
+	tmpFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+
+	var indexEntries []IndexEntry
+	var lastIndexedPosition int64 = -1
+	var currentPos int64 = 0
+
+	for currentPos < validLogSize {
+		// Read batch header details to extract offsets
+		headerBuf := make([]byte, 33)
+		if _, err := seg.ReadAt(headerBuf, currentPos); err != nil {
+			tmpFile.Close()
+			os.Remove(tmpPath)
+			return err
+		}
+
+		batchBaseOffset := binary.BigEndian.Uint64(headerBuf[13:21])
+		batchLength := binary.BigEndian.Uint32(headerBuf[5:9])
+		totalBatchSize := int64(9) + int64(batchLength)
+
+		relative := batchBaseOffset - seg.baseOffset
+		if relative > math.MaxUint32 {
+			tmpFile.Close()
+			os.Remove(tmpPath)
+			return ErrIndexOffsetOverflow
+		}
+
+		shouldIndex := len(indexEntries) == 0 ||
+			currentPos-lastIndexedPosition >= int64(s.indexIntervalBytes)
+
+		if shouldIndex {
+			entry := IndexEntry{
+				RelativeOffset: uint32(relative),
+				Position:       uint64(currentPos),
+			}
+
+			buf := make([]byte, 12)
+			binary.BigEndian.PutUint32(buf[0:4], entry.RelativeOffset)
+			binary.BigEndian.PutUint64(buf[4:12], entry.Position)
+
+			n, err := tmpFile.Write(buf)
+			if err != nil {
+				tmpFile.Close()
+				os.Remove(tmpPath)
+				return err
+			}
+			if n != 12 {
+				tmpFile.Close()
+				os.Remove(tmpPath)
+				return io.ErrShortWrite
+			}
+
+			indexEntries = append(indexEntries, entry)
+			lastIndexedPosition = currentPos
+		}
+
+		currentPos += totalBatchSize
+	}
+
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	// Close old index descriptor and replace it
+	seg.indexFile.Close()
+
+	if err := os.Rename(tmpPath, seg.indexPath); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+
+	// Open new index file handle
+	newIdxFile, err := os.OpenFile(seg.indexPath, os.O_RDWR, 0640)
+	if err != nil {
+		return err
+	}
+
+	seg.indexFile = newIdxFile
+	seg.indexEntries = indexEntries
+	seg.lastIndexedPosition = lastIndexedPosition
+	seg.indexDirty = false
+	seg.indexSize = int64(len(indexEntries) * 12)
+
+	// Sync partition directory to commit updates
+	return syncDirectory(s.dir)
+}
+
+func (s *Store) truncateLog(seg *Segment, validSize int64) error {
+	if err := seg.file.Truncate(validSize); err != nil {
+		return fmt.Errorf("failed to truncate active log file %q to size %d: %w", seg.path, validSize, err)
+	}
+	seg.size = validSize
+	return nil
 }
 
 func (s *Store) closeAllOpenSegments() {
@@ -451,6 +707,15 @@ func (s *Store) closeAllOpenSegments() {
 		seg.Close()
 	}
 	s.segments = nil
+}
+
+func syncDirectory(path string) error {
+	d, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func recordSize(record model.StoredRecord) int {

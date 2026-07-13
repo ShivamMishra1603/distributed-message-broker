@@ -10,7 +10,7 @@ import (
 func TestManager_CreateAndReopenMetadata(t *testing.T) {
 	dir := t.TempDir()
 
-	mgr, err := NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	mgr, err := NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestManager_CreateAndReopenMetadata(t *testing.T) {
 	}
 
 	// Reopen a new manager instance and verify it recovers the state
-	mgr2, err := NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	mgr2, err := NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	if err != nil {
 		t.Fatalf("failed to reopen manager: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestManager_CreateAndReopenMetadata(t *testing.T) {
 
 func TestManager_CreateTopicValidation(t *testing.T) {
 	dir := t.TempDir()
-	mgr, _ := NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	mgr, _ := NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	defer mgr.Close()
 
 	ret := RetentionPolicy{}
@@ -87,7 +87,7 @@ func TestManager_CrashConsistency(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mgr, err := NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	mgr, err := NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	if err != nil {
 		t.Fatalf("failed to open manager with ghost directories: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestManager_CrashConsistency(t *testing.T) {
 
 	// 2. Case: topics.json references a missing partition directory -> NewManager fails startup
 	// Let's create a valid topic
-	mgrWrite, _ := NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	mgrWrite, _ := NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	_, _ = mgrWrite.CreateTopic("broken-topic", 2, RetentionPolicy{})
 	mgrWrite.Close()
 
@@ -112,7 +112,7 @@ func TestManager_CrashConsistency(t *testing.T) {
 	}
 
 	// Open store must fail due to missing partition directory referenced in topics.json
-	_, err = NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	_, err = NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	if err == nil {
 		t.Error("expected NewManager to fail when partition directory is missing, got nil")
 	}
@@ -123,7 +123,7 @@ func TestManager_CrashConsistency(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	_, err = NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	if err == nil {
 		t.Error("expected NewManager to fail when topics.json is malformed, got nil")
 	}

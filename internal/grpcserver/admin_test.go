@@ -57,7 +57,7 @@ func startAdminBufServer(t *testing.T, mgr *topic.Manager) (brokerpb.AdminServic
 
 func TestAdminServer_Lifecycle(t *testing.T) {
 	dir := t.TempDir()
-	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestAdminServer_Lifecycle(t *testing.T) {
 
 func TestAdminServer_Validation(t *testing.T) {
 	dir := t.TempDir()
-	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, "sync", nil)
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
