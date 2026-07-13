@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
 	"testing"
 	"time"
 
@@ -116,5 +117,59 @@ func TestBroker_FailedStartRollback(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Error("b2 Start did not exit cleanly")
+	}
+}
+
+func TestBroker_UnexpectedServerCrash(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Broker.GRPCAddress = "127.0.0.1:0"
+	cfg.Broker.HTTPAddress = "127.0.0.1:0"
+	cfg.Storage.DataDirectory = t.TempDir()
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	b, err := New(cfg, logger)
+	if err != nil {
+		t.Fatalf("failed to create broker: %v", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- b.Start()
+	}()
+
+	// Allow servers to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Simulate unexpected crash of gRPC server by closing its listener directly
+	err = b.grpcServer.CloseListener()
+	if err != nil {
+		t.Fatalf("failed to close listener: %v", err)
+	}
+
+	// The broker should detect this crash, cancel maintenance worker, mark ready=false, and shutdown
+	// We wait up to 1 second for the broker to transition to stopped = true
+	success := false
+	for i := 0; i < 50; i++ {
+		b.mu.Lock()
+		stopped := b.stopped
+		b.mu.Unlock()
+		if stopped {
+			success = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if !success {
+		t.Error("broker did not auto-shutdown after unexpected server crash")
+	}
+
+	// Start should have returned
+	select {
+	case <-errCh:
+		// expected to exit successfully since monitorServe called Shutdown
+	case <-time.After(2 * time.Second):
+		t.Error("broker Start did not exit after crash")
 	}
 }

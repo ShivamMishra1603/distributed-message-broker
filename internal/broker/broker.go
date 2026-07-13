@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"path/filepath"
 	"sync"
 	"time"
@@ -30,6 +29,7 @@ type Broker struct {
 	maintenanceCtx    context.Context
 	maintenanceCancel context.CancelFunc
 	maintenanceWG     sync.WaitGroup
+	serveWG           sync.WaitGroup
 	mu                sync.Mutex
 	started           bool
 	stopped           bool
@@ -119,25 +119,51 @@ func (b *Broker) Start() error {
 		return err
 	}
 
+	serveErrCh := make(chan error, 2)
+
 	// 3. Start HTTP serving loop
-	httpErrCh := make(chan error, 1)
+	b.serveWG.Add(1)
 	go func() {
+		defer b.serveWG.Done()
 		err := b.httpServer.Serve()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+
+		b.mu.Lock()
+		stopped := b.stopped
+		b.mu.Unlock()
+
+		if !stopped {
 			b.logger.Error("HTTP server stopped unexpectedly", "err", err)
 			b.httpServer.SetReady(false)
-			httpErrCh <- err
+			if err == nil {
+				err = errors.New("server exited without error")
+			}
+			select {
+			case serveErrCh <- fmt.Errorf("HTTP server crashed: %w", err):
+			default:
+			}
 		}
 	}()
 
 	// 4. Start gRPC serving loop
-	grpcErrCh := make(chan error, 1)
+	b.serveWG.Add(1)
 	go func() {
+		defer b.serveWG.Done()
 		err := b.grpcServer.Serve()
-		if err != nil {
+
+		b.mu.Lock()
+		stopped := b.stopped
+		b.mu.Unlock()
+
+		if !stopped {
 			b.logger.Error("gRPC server stopped unexpectedly", "err", err)
 			b.httpServer.SetReady(false)
-			grpcErrCh <- err
+			if err == nil {
+				err = errors.New("server exited without error")
+			}
+			select {
+			case serveErrCh <- fmt.Errorf("gRPC server crashed: %w", err):
+			default:
+			}
 		}
 	}()
 
@@ -145,22 +171,33 @@ func (b *Broker) Start() error {
 	b.maintenanceWG.Add(1)
 	go b.runRetentionWorker()
 
-	// 6. Set ready status
-	b.httpServer.SetReady(true)
-
-	// Briefly check if servers failed immediately
+	// Briefly check if servers failed immediately during 50ms startup window
 	select {
-	case err := <-httpErrCh:
+	case err := <-serveErrCh:
 		_ = b.Shutdown(context.Background())
-		return fmt.Errorf("HTTP server failed immediately: %w", err)
-	case err := <-grpcErrCh:
-		_ = b.Shutdown(context.Background())
-		return fmt.Errorf("gRPC server failed immediately: %w", err)
+		return fmt.Errorf("server failed immediately during startup: %w", err)
 	case <-time.After(50 * time.Millisecond):
-		// started successfully
+		// Mark ready now that start has succeeded
+		b.httpServer.SetReady(true)
+		go b.monitorServe(serveErrCh)
 	}
 
 	return nil
+}
+
+func (b *Broker) monitorServe(serveErrCh <-chan error) {
+	select {
+	case err := <-serveErrCh:
+		b.mu.Lock()
+		alreadyStopping := b.stopped
+		b.mu.Unlock()
+		if !alreadyStopping {
+			b.logger.Error("Fatal serve loop crash detected, shutting down broker", "err", err)
+			_ = b.Shutdown(context.Background())
+		}
+	case <-b.maintenanceCtx.Done():
+		// Graceful exit of the monitor loop when maintenance context is cancelled
+	}
 }
 
 // Shutdown gracefully stops the broker server, then flushes and closes storage.
@@ -190,10 +227,13 @@ func (b *Broker) Shutdown(ctx context.Context) error {
 	// 5. Shutdown HTTP server
 	httpErr := b.httpServer.Shutdown(ctx)
 
-	// 6. Close the offset store
+	// 6. Wait for serving loops to complete
+	b.serveWG.Wait()
+
+	// 7. Close the offset store
 	offsetErr := b.offsetStore.Close()
 
-	// 7. Close topic manager and partition stores
+	// 8. Close topic manager and partition stores
 	storageErr := b.topicManager.Close()
 
 	return errors.Join(grpcErr, httpErr, offsetErr, storageErr)

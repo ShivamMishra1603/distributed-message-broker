@@ -20,7 +20,8 @@ type Metrics struct {
 	ProduceDuration *prometheus.HistogramVec
 	FetchDuration   *prometheus.HistogramVec
 
-	// Record and Byte counts
+	// Record and Byte counts.
+	// Note: RecordsAppended and BytesWritten count data that has been successfully appended and synchronized (post-fsync).
 	RecordsAppended prometheus.Counter
 	RecordsFetched  prometheus.Counter
 	BytesWritten    prometheus.Counter
@@ -97,7 +98,7 @@ func NewMetrics() *Metrics {
 		RecordsAppended: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "broker_records_appended_total",
-				Help: "Total number of records successfully written to segment log files.",
+				Help: "Total number of records acknowledged as successfully appended (post-fsync).",
 			},
 		),
 		RecordsFetched: prometheus.NewCounter(
@@ -109,7 +110,7 @@ func NewMetrics() *Metrics {
 		BytesWritten: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Name: "broker_bytes_written_total",
-				Help: "Total number of bytes written to segment log files.",
+				Help: "Total number of bytes acknowledged as successfully appended (post-fsync).",
 			},
 		),
 		BytesRead: prometheus.NewCounter(
