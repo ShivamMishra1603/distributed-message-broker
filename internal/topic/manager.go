@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -292,19 +293,16 @@ func (m *Manager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var errs []string
+	var errs []error
 	for _, t := range m.topics {
 		for _, p := range t.partitions {
 			if err := p.Close(); err != nil {
-				errs = append(errs, err.Error())
+				errs = append(errs, err)
 			}
 		}
 	}
 
-	if len(errs) > 0 {
-		return fmt.Errorf("errors closing manager partition logs: %s", errs)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (m *Manager) saveMetadata(newName string, newTopic DiskTopic) (committed bool, err error) {
@@ -344,10 +342,16 @@ func (m *Manager) saveMetadata(newName string, newTopic DiskTopic) (committed bo
 		return false, err
 	}
 
-	if _, err := tmpFile.Write(data); err != nil {
+	n, err := tmpFile.Write(data)
+	if err != nil {
 		tmpFile.Close()
 		os.Remove(tmpPath)
 		return false, err
+	}
+	if n != len(data) {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return false, io.ErrShortWrite
 	}
 
 	if err := tmpFile.Sync(); err != nil {
