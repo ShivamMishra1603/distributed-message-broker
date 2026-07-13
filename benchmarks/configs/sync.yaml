@@ -1,0 +1,15 @@
+broker:
+  grpc_address: "localhost:9092"
+  http_address: "localhost:9093"
+storage:
+  data_directory: "./benchmarks/data"
+  flush_mode: "sync"
+  index_interval_bytes: 4096
+  segment_max_bytes: 134217728
+observability:
+  log_level: "error"
+  log_format: "json"
+  metrics_enabled: true
+  pprof_enabled: true
+  mutex_profile_fraction: 0
+  block_profile_rate: 0

@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "run_id": "",
+    "run_number": 1,
+    "warmup": false,
+    "commit": "8b95a690",
+    "dirty": true,
+    "build_time": "2026-07-13T19:23:34Z",
+    "go_version": "go1.25.1",
+    "os": "darwin",
+    "arch": "arm64",
+    "broker_version": "1.0.0"
+  },
+  "topic": "bench-s3-10240",
+  "partitions": 4,
+  "partition_mode": "round-robin",
+  "flush_mode": "sync",
+  "requested_records": 50000,
+  "acknowledged_records": 50000,
+  "failed_records": 0,
+  "rpc_count": 500,
+  "record_size_bytes": 10240,
+  "batch_size": 100,
+  "concurrency": 4,
+  "duration_seconds": 3.035842875,
+  "messages_per_second": 16469.89059010506,
+  "payload_mib_per_second": 160.83877529399476,
+  "latency": {
+    "min_ms": 12.874208,
+    "mean_ms": 24.205394,
+    "p50_ms": 24.029667,
+    "p95_ms": 33.844166,
+    "p99_ms": 38.051042,
+    "max_ms": 41.841209
+  },
+  "errors": {}
+}

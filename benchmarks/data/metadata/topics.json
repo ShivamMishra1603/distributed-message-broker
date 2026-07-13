@@ -1,0 +1,12 @@
+{
+  "topics": {
+    "bench-profile": {
+      "name": "bench-profile",
+      "partition_count": 4,
+      "retention": {
+        "max_age_seconds": 604800,
+        "max_bytes": 10737418240
+      }
+    }
+  }
+}

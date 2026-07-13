@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "run_id": "",
+    "run_number": 3,
+    "warmup": false,
+    "commit": "8b95a690",
+    "dirty": true,
+    "build_time": "2026-07-13T19:23:34Z",
+    "go_version": "go1.25.1",
+    "os": "darwin",
+    "arch": "arm64",
+    "broker_version": "1.0.0"
+  },
+  "topic": "bench-s4-single-32",
+  "partitions": 1,
+  "partition_mode": "explicit",
+  "flush_mode": "sync",
+  "requested_records": 100000,
+  "acknowledged_records": 100000,
+  "failed_records": 0,
+  "rpc_count": 1000,
+  "record_size_bytes": 100,
+  "batch_size": 100,
+  "concurrency": 32,
+  "duration_seconds": 8.022167167,
+  "messages_per_second": 12465.459509664692,
+  "payload_mib_per_second": 1.1887988576569264,
+  "latency": {
+    "min_ms": 9.013416,
+    "mean_ms": 252.677518,
+    "p50_ms": 256.023375,
+    "p95_ms": 259.914666,
+    "p99_ms": 261.243666,
+    "max_ms": 261.996167
+  },
+  "errors": {}
+}

@@ -28,10 +28,12 @@ type StorageConfig struct {
 }
 
 type ObservabilityConfig struct {
-	LogLevel       string `yaml:"log_level"`
-	LogFormat      string `yaml:"log_format"`
-	MetricsEnabled bool   `yaml:"metrics_enabled"`
-	PprofEnabled   bool   `yaml:"pprof_enabled"`
+	LogLevel             string `yaml:"log_level"`
+	LogFormat            string `yaml:"log_format"`
+	MetricsEnabled       bool   `yaml:"metrics_enabled"`
+	PprofEnabled         bool   `yaml:"pprof_enabled"`
+	MutexProfileFraction int    `yaml:"mutex_profile_fraction"`
+	BlockProfileRate     int    `yaml:"block_profile_rate"`
 }
 
 type RetentionConfig struct {
@@ -73,10 +75,12 @@ func DefaultConfig() Config {
 			CheckInterval:            5 * time.Minute,
 		},
 		Observability: ObservabilityConfig{
-			LogLevel:       "info",
-			LogFormat:      "json",
-			MetricsEnabled: true,
-			PprofEnabled:   false,
+			LogLevel:             "info",
+			LogFormat:            "json",
+			MetricsEnabled:       true,
+			PprofEnabled:         false,
+			MutexProfileFraction: 0,
+			BlockProfileRate:     0,
 		},
 	}
 }
@@ -174,6 +178,18 @@ func Load(path string) (Config, error) {
 			return Config{}, fmt.Errorf("invalid BROKER_PPROF_ENABLED %q: %w", val, err)
 		}
 		cfg.Observability.PprofEnabled = bVal
+	}
+	if val := os.Getenv("BROKER_MUTEX_PROFILE_FRACTION"); val != "" {
+		var intVal int
+		if _, err := fmt.Sscanf(val, "%d", &intVal); err == nil {
+			cfg.Observability.MutexProfileFraction = intVal
+		}
+	}
+	if val := os.Getenv("BROKER_BLOCK_PROFILE_RATE"); val != "" {
+		var intVal int
+		if _, err := fmt.Sscanf(val, "%d", &intVal); err == nil {
+			cfg.Observability.BlockProfileRate = intVal
+		}
 	}
 
 	// 3. Validation and parsing of Durations

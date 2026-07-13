@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/broker"
@@ -31,6 +32,14 @@ func run() error {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
+	// Apply process-global profiling rates if configured
+	if cfg.Observability.MutexProfileFraction > 0 {
+		runtime.SetMutexProfileFraction(cfg.Observability.MutexProfileFraction)
+	}
+	if cfg.Observability.BlockProfileRate > 0 {
+		runtime.SetBlockProfileRate(cfg.Observability.BlockProfileRate)
+	}
+
 	// 3. Construct Logger
 	log, err := logger.New(cfg.Observability.LogLevel, cfg.Observability.LogFormat, os.Stdout)
 	if err != nil {
@@ -51,24 +60,20 @@ func run() error {
 		return fmt.Errorf("failed to construct broker orchestrator: %w", err)
 	}
 
-	// 6. Listen for OS Signals
+	// 6. Start Broker Orchestrator
+	if err := b.Start(); err != nil {
+		return fmt.Errorf("server startup failed: %w", err)
+	}
+
+	// 7. Listen for OS Signals
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
-	// Channel to capture broker orchestrator start failures
-	serverErrCh := make(chan error, 1)
-	go func() {
-		serverErrCh <- b.Start()
-	}()
-
-	// Block on either a signal or server startup failure
+	// Block on either a signal or server crash
 	select {
-	case err := <-serverErrCh:
-		if err != nil {
-			return fmt.Errorf("server startup failed: %w", err)
-		}
-		log.Info("server stopped unexpectedly without error")
-		return nil
+	case <-b.Done():
+		log.Error("broker stopped unexpectedly")
+		return fmt.Errorf("broker stopped unexpectedly")
 
 	case sig := <-sigCh:
 		log.Info("os signal received, starting shutdown", "signal", sig.String())

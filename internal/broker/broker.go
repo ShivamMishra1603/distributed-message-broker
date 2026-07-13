@@ -33,6 +33,7 @@ type Broker struct {
 	mu                sync.Mutex
 	started           bool
 	stopped           bool
+	doneCh            chan struct{}
 }
 
 // New instantiates the Broker orchestrator wiring all packages.
@@ -89,6 +90,7 @@ func New(cfg config.Config, logger *slog.Logger) (*Broker, error) {
 		metrics:           metrics,
 		maintenanceCtx:    mCtx,
 		maintenanceCancel: mCancel,
+		doneCh:            make(chan struct{}),
 	}, nil
 }
 
@@ -236,7 +238,13 @@ func (b *Broker) Shutdown(ctx context.Context) error {
 	// 8. Close topic manager and partition stores
 	storageErr := b.topicManager.Close()
 
+	close(b.doneCh)
+
 	return errors.Join(grpcErr, httpErr, offsetErr, storageErr)
+}
+
+func (b *Broker) Done() <-chan struct{} {
+	return b.doneCh
 }
 
 func (b *Broker) runRetentionWorker() {
