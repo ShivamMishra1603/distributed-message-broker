@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  broker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: distributed-message-broker:latest
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      BROKER_GRPC_ADDRESS: "0.0.0.0:9092"
+      BROKER_HTTP_ADDRESS: "0.0.0.0:9093"
+      BROKER_DATA_DIRECTORY: "/var/lib/broker"
+      BROKER_METRICS_ENABLED: "true"
+      BROKER_PPROF_ENABLED: "false"
+    volumes:
+      - broker-data:/var/lib/broker
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9093/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 2s
+
+  prometheus:
+    image: prom/prometheus:v2.53.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      broker:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  broker-data:

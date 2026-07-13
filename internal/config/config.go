@@ -2,7 +2,9 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 
 type BrokerConfig struct {
 	GRPCAddress             string        `yaml:"grpc_address"`
+	HTTPAddress             string        `yaml:"http_address"`
 	GracefulShutdownTimeout time.Duration `yaml:"-"`
 	ShutdownTimeoutStr      string        `yaml:"graceful_shutdown_timeout"`
 }
@@ -25,8 +28,10 @@ type StorageConfig struct {
 }
 
 type ObservabilityConfig struct {
-	LogLevel  string `yaml:"log_level"`
-	LogFormat string `yaml:"log_format"`
+	LogLevel       string `yaml:"log_level"`
+	LogFormat      string `yaml:"log_format"`
+	MetricsEnabled bool   `yaml:"metrics_enabled"`
+	PprofEnabled   bool   `yaml:"pprof_enabled"`
 }
 
 type RetentionConfig struct {
@@ -49,6 +54,7 @@ func DefaultConfig() Config {
 	return Config{
 		Broker: BrokerConfig{
 			GRPCAddress:        "localhost:50051",
+			HTTPAddress:        "localhost:9093",
 			ShutdownTimeoutStr: "15s",
 		},
 		Storage: StorageConfig{
@@ -67,8 +73,10 @@ func DefaultConfig() Config {
 			CheckInterval:            5 * time.Minute,
 		},
 		Observability: ObservabilityConfig{
-			LogLevel:  "info",
-			LogFormat: "json",
+			LogLevel:       "info",
+			LogFormat:      "json",
+			MetricsEnabled: true,
+			PprofEnabled:   false,
 		},
 	}
 }
@@ -81,14 +89,16 @@ func Load(path string) (Config, error) {
 	if path != "" {
 		file, err := os.Open(path)
 		if err != nil {
-			return Config{}, fmt.Errorf("failed to open config file %q: %w", path, err)
-		}
-		defer file.Close()
-
-		dec := yaml.NewDecoder(file)
-		dec.KnownFields(true)
-		if err := dec.Decode(&cfg); err != nil {
-			return Config{}, fmt.Errorf("failed to parse yaml config: %w", err)
+			if !os.IsNotExist(err) || path != "./config/config.yaml" {
+				return Config{}, fmt.Errorf("failed to open config file %q: %w", path, err)
+			}
+		} else {
+			defer file.Close()
+			dec := yaml.NewDecoder(file)
+			dec.KnownFields(true)
+			if err := dec.Decode(&cfg); err != nil {
+				return Config{}, fmt.Errorf("failed to parse yaml config: %w", err)
+			}
 		}
 	}
 
@@ -148,9 +158,30 @@ func Load(path string) (Config, error) {
 		cfg.Retention.CheckIntervalStr = val
 	}
 
+	if val := os.Getenv("BROKER_HTTP_ADDRESS"); val != "" {
+		cfg.Broker.HTTPAddress = val
+	}
+	if val := os.Getenv("BROKER_METRICS_ENABLED"); val != "" {
+		bVal, err := strconv.ParseBool(val)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid BROKER_METRICS_ENABLED %q: %w", val, err)
+		}
+		cfg.Observability.MetricsEnabled = bVal
+	}
+	if val := os.Getenv("BROKER_PPROF_ENABLED"); val != "" {
+		bVal, err := strconv.ParseBool(val)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid BROKER_PPROF_ENABLED %q: %w", val, err)
+		}
+		cfg.Observability.PprofEnabled = bVal
+	}
+
 	// 3. Validation and parsing of Durations
-	if cfg.Broker.GRPCAddress == "" {
-		return Config{}, fmt.Errorf("broker.grpc_address cannot be empty")
+	if err := validateAddr(cfg.Broker.GRPCAddress, "broker.grpc_address"); err != nil {
+		return Config{}, err
+	}
+	if err := validateAddr(cfg.Broker.HTTPAddress, "broker.http_address"); err != nil {
+		return Config{}, err
 	}
 
 	timeout, err := time.ParseDuration(cfg.Broker.ShutdownTimeoutStr)
@@ -238,4 +269,19 @@ func Load(path string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func validateAddr(address string, name string) error {
+	if address == "" {
+		return fmt.Errorf("%s cannot be empty", name)
+	}
+	_, portStr, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("invalid %s %q: %w", name, address, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 0 || port > 65535 {
+		return fmt.Errorf("invalid %s port %q: port must be between 0 and 65535", name, portStr)
+	}
+	return nil
 }

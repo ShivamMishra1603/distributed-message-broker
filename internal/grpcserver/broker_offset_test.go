@@ -23,7 +23,7 @@ import (
 func startBrokerBufServerWithStore(t *testing.T, mgr *topic.Manager, ostore *offsets.Store, storageCfg config.StorageConfig) (brokerpb.BrokerServiceClient, func()) {
 	lis := bufconn.Listen(1024 * 1024)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	brokerSrv := NewBrokerServer(logger, mgr, ostore, storageCfg)
+	brokerSrv := NewBrokerServer(logger, mgr, ostore, storageCfg, nil)
 
 	s := grpc.NewServer()
 	brokerpb.RegisterBrokerServiceServer(s, brokerSrv)
@@ -60,7 +60,7 @@ func startBrokerBufServerWithStore(t *testing.T, mgr *topic.Manager, ostore *off
 func TestBrokerServer_OffsetsAPI(t *testing.T) {
 	dir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", logger)
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", logger, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestBrokerServer_OffsetsAPI(t *testing.T) {
 func TestBrokerServer_OffsetsAPI_UnavailableStore(t *testing.T) {
 	dir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", logger)
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", logger, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

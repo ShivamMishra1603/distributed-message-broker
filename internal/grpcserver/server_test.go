@@ -20,7 +20,7 @@ import (
 func TestServer_LifecycleAndHealth(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	dir := t.TempDir()
-	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,9 +39,9 @@ func TestServer_LifecycleAndHealth(t *testing.T) {
 		MaxBatchBytes:   500,
 		SegmentMaxBytes: 1000,
 		FlushMode:       "sync",
-	})
+	}, nil)
 
-	srv := New("127.0.0.1:0", logger, admin, broker, 1024*1024)
+	srv := New("127.0.0.1:0", logger, admin, broker, 1024*1024, nil)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -123,7 +123,7 @@ func TestServer_LifecycleAndHealth(t *testing.T) {
 func TestServer_ShutdownTimeoutReturnsError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	dir := t.TempDir()
-	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,9 +142,9 @@ func TestServer_ShutdownTimeoutReturnsError(t *testing.T) {
 		MaxBatchBytes:   500,
 		SegmentMaxBytes: 1000,
 		FlushMode:       "sync",
-	})
+	}, nil)
 
-	srv := New("127.0.0.1:0", logger, admin, broker, 1024*1024)
+	srv := New("127.0.0.1:0", logger, admin, broker, 1024*1024, nil)
 
 	go func() {
 		srv.Start()
@@ -172,7 +172,7 @@ func TestServer_ShutdownTimeoutReturnsError(t *testing.T) {
 func TestServer_BindError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	dir := t.TempDir()
-	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil)
+	mgr, err := topic.NewManager(dir, 1024*1024, 512*1024, 4096, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestServer_BindError(t *testing.T) {
 		MaxBatchBytes:   500,
 		SegmentMaxBytes: 1000,
 		FlushMode:       "sync",
-	})
+	}, nil)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -199,7 +199,7 @@ func TestServer_BindError(t *testing.T) {
 	}
 	defer lis.Close()
 
-	srv := New(lis.Addr().String(), logger, admin, broker, 1024*1024)
+	srv := New(lis.Addr().String(), logger, admin, broker, 1024*1024, nil)
 	err = srv.Start()
 	if err == nil {
 		t.Error("expected start to return bind error, got nil")

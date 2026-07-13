@@ -18,7 +18,7 @@ func TestStore_TimeRetentionBasic(t *testing.T) {
 	}
 
 	// Create store with 10-byte index interval
-	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", clock)
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", clock, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestStore_TimeRetentionBasic(t *testing.T) {
 func TestStore_SizeRetentionBasic(t *testing.T) {
 	dir := t.TempDir()
 
-	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestStore_SizeRetentionBasic(t *testing.T) {
 
 func TestStore_RetentionReadLockConcurrency(t *testing.T) {
 	dir := t.TempDir()
-	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestStore_RetentionReadLockConcurrency(t *testing.T) {
 
 func TestStore_LogRemovalFailureBehavior(t *testing.T) {
 	dir := t.TempDir()
-	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

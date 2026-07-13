@@ -40,6 +40,7 @@ type Store struct {
 	indexIntervalBytes int
 	flushMode          string
 	clock              model.Clock
+	observer           Observer
 
 	mu             sync.RWMutex
 	closed         bool
@@ -52,13 +53,21 @@ type Store struct {
 
 // OpenStore opens a partition store directory, scans and validates all log files,
 // reconstructs offset states, validates/rebuilds sparse indexes, and opens the active segment.
-func OpenStore(dir string, segmentMaxBytes int64, maxBatchBytes int64, indexIntervalBytes int, flushMode string, clock model.Clock) (*Store, error) {
+func OpenStore(dir string, segmentMaxBytes int64, maxBatchBytes int64, indexIntervalBytes int, flushMode string, clock model.Clock, observer Observer) (store *Store, err error) {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
+	if observer == nil {
+		observer = NoopObserver{}
+	}
+
+	recoveryStart := time.Now()
+	defer func() {
+		observer.ObserveRecovery(time.Since(recoveryStart), err)
+	}()
 
 	// Create directory if not exists
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err = os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create partition directory %q: %w", dir, err)
 	}
 
@@ -96,13 +105,14 @@ func OpenStore(dir string, segmentMaxBytes int64, maxBatchBytes int64, indexInte
 		return baseOffsets[i] < baseOffsets[j]
 	})
 
-	store := &Store{
+	store = &Store{
 		dir:                dir,
 		segmentMaxBytes:    segmentMaxBytes,
 		maxBatchBytes:      maxBatchBytes,
 		indexIntervalBytes: indexIntervalBytes,
 		flushMode:          strings.ToLower(flushMode),
 		clock:              clock,
+		observer:           observer,
 		segments:           make([]*Segment, 0),
 		earliestOffset:     0,
 		logEndOffset:       0,
@@ -155,11 +165,19 @@ func OpenStore(dir string, segmentMaxBytes int64, maxBatchBytes int64, indexInte
 		store.activeSegment = store.segments[len(store.segments)-1]
 	}
 
+	store.updateGaugesLocked()
+
 	return store, nil
 }
 
 // Append writes a batch of records. Implements sync/async flush, rollover, and offset assignments.
 func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, err error) {
+	start := time.Now()
+	var encodedBytes int
+	defer func() {
+		s.observer.ObserveAppend(time.Since(start), len(records), encodedBytes, err)
+	}()
+
 	if len(records) == 0 {
 		return 0, 0, fmt.Errorf("cannot append empty batch")
 	}
@@ -195,6 +213,7 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 	if err != nil {
 		return 0, 0, err
 	}
+	encodedBytes = len(encoded)
 
 	batchSize := int64(len(encoded))
 	if batchSize > s.maxBatchBytes {
@@ -256,17 +275,31 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 
 	// 6. Apply Flush Policy
 	if s.flushMode == "sync" {
-		if err := s.activeSegment.Flush(); err != nil {
+		fsyncStart := time.Now()
+		flushErr := s.activeSegment.Flush()
+		s.observer.ObserveFsync(time.Since(fsyncStart), flushErr)
+		if flushErr != nil {
 			s.writeFailed = true
-			return 0, 0, err
+			return 0, 0, flushErr
 		}
 	}
+
+	s.updateGaugesLocked()
 
 	return base, last, nil
 }
 
 // Read reads records starting from the requested offset up to maxBytes.
-func (s *Store) Read(offset uint64, maxBytes int) ([]model.StoredRecord, error) {
+func (s *Store) Read(offset uint64, maxBytes int) (result []model.StoredRecord, err error) {
+	start := time.Now()
+	var readBytes int
+	defer func() {
+		for _, r := range result {
+			readBytes += recordSize(r)
+		}
+		s.observer.ObserveRead(time.Since(start), len(result), readBytes, err)
+	}()
+
 	if maxBytes <= 0 {
 		return nil, fmt.Errorf("maxBytes must be greater than zero, got %d", maxBytes)
 	}
@@ -298,7 +331,6 @@ func (s *Store) Read(offset uint64, maxBytes int) ([]model.StoredRecord, error) 
 		return nil, ErrOffsetOutOfRange
 	}
 
-	var result []model.StoredRecord
 	accumulatedBytes := 0
 	currOffset := offset
 
@@ -688,6 +720,8 @@ func (s *Store) rebuildIndex(seg *Segment, validLogSize int64) error {
 	seg.indexDirty = false
 	seg.indexSize = int64(len(indexEntries) * 12)
 
+	s.observer.IndexRebuilt()
+
 	// Sync partition directory to commit updates
 	return syncDirectory(s.dir)
 }
@@ -705,6 +739,14 @@ func (s *Store) closeAllOpenSegments() {
 		seg.Close()
 	}
 	s.segments = nil
+}
+
+func (s *Store) updateGaugesLocked() {
+	var totalBytes int64
+	for _, seg := range s.segments {
+		totalBytes += seg.Size()
+	}
+	s.observer.SetPartitionState(totalBytes, len(s.segments))
 }
 
 func syncDirectory(path string) error {
@@ -785,6 +827,8 @@ func (s *Store) ApplyRetention(maxAge time.Duration, maxPartitionBytes uint64) e
 		}
 	}
 
+	s.updateGaugesLocked()
+
 	if len(cleanupErrors) > 0 {
 		return fmt.Errorf("errors during retention cleanup: %w", errors.Join(cleanupErrors...))
 	}
@@ -814,6 +858,8 @@ func (s *Store) deleteSegmentAtIndex(idx int) error {
 	if err := os.Remove(seg.path); err != nil {
 		return fmt.Errorf("failed to delete authoritative log file %q: %w", seg.path, err)
 	}
+
+	s.observer.SegmentDeleted()
 
 	// 2. Immediately remove the segment from the in-memory view and update earliest offset
 	copy(s.segments[idx:], s.segments[idx+1:])

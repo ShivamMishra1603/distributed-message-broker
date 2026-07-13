@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/partition"
+	"github.com/ShivamMishra1603/distributed-message-broker/internal/storage"
 )
 
 const MaxPartitionsPerTopic = 1024
@@ -71,6 +72,9 @@ type TopicsMetadata struct {
 	Topics map[string]DiskTopic `json:"topics"`
 }
 
+// ObserverFactory defines a callback to construct a storage observer for a partition.
+type ObserverFactory func(topic string, partitionID uint32) storage.Observer
+
 // Manager orchestrates topic metadata and partition lifetime on disk.
 type Manager struct {
 	mu                   sync.RWMutex
@@ -82,6 +86,7 @@ type Manager struct {
 	flushMode            string
 	defaultMaxAgeSeconds uint64
 	defaultMaxBytes      uint64
+	observerFactory      ObserverFactory
 	logger               *slog.Logger
 }
 
@@ -94,9 +99,14 @@ func (m *Manager) SetRetentionDefaults(maxAgeSeconds uint64, maxBytes uint64) {
 }
 
 // NewManager loads metadata, reconstructs partitions from disk, and handles directory mappings.
-func NewManager(dataDir string, segmentMaxBytes int64, maxBatchBytes int64, indexIntervalBytes int, flushMode string, logger *slog.Logger) (*Manager, error) {
+func NewManager(dataDir string, segmentMaxBytes int64, maxBatchBytes int64, indexIntervalBytes int, flushMode string, logger *slog.Logger, observerFactory ObserverFactory) (*Manager, error) {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	}
+	if observerFactory == nil {
+		observerFactory = func(topic string, partitionID uint32) storage.Observer {
+			return storage.NoopObserver{}
+		}
 	}
 
 	mgr := &Manager{
@@ -106,6 +116,7 @@ func NewManager(dataDir string, segmentMaxBytes int64, maxBatchBytes int64, inde
 		maxBatchBytes:      maxBatchBytes,
 		indexIntervalBytes: indexIntervalBytes,
 		flushMode:          flushMode,
+		observerFactory:    observerFactory,
 		logger:             logger,
 	}
 
@@ -152,7 +163,7 @@ func NewManager(dataDir string, segmentMaxBytes int64, maxBatchBytes int64, inde
 					return nil, fmt.Errorf("metadata references missing partition directory: %s", pDir)
 				}
 
-				pLog, err := partition.NewLog(name, uint32(i), dataDir, segmentMaxBytes, maxBatchBytes, indexIntervalBytes, flushMode, nil)
+				pLog, err := partition.NewLog(name, uint32(i), dataDir, segmentMaxBytes, maxBatchBytes, indexIntervalBytes, flushMode, nil, observerFactory(name, uint32(i)))
 				if err != nil {
 					for _, p := range partitions {
 						if p != nil {
@@ -213,7 +224,7 @@ func (m *Manager) CreateTopic(name string, partitionCount int, retention Retenti
 		pDir := filepath.Join(m.dataDir, "topics", name, fmt.Sprintf("partition-%d", i))
 		createdDirs = append(createdDirs, pDir)
 
-		partitions[i], err = partition.NewLog(name, uint32(i), m.dataDir, m.segmentMaxBytes, m.maxBatchBytes, m.indexIntervalBytes, m.flushMode, nil)
+		partitions[i], err = partition.NewLog(name, uint32(i), m.dataDir, m.segmentMaxBytes, m.maxBatchBytes, m.indexIntervalBytes, m.flushMode, nil, m.observerFactory(name, uint32(i)))
 		if err != nil {
 			// Rollback partition logs
 			for _, p := range partitions {

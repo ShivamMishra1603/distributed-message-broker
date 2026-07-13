@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	brokerpb "github.com/ShivamMishra1603/distributed-message-broker/gen/proto/broker/v1"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/config"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/model"
+	"github.com/ShivamMishra1603/distributed-message-broker/internal/observability"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/offsets"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/storage"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/topic"
@@ -21,18 +23,29 @@ type BrokerServer struct {
 	topicManager *topic.Manager
 	offsets      *offsets.Store
 	storageCfg   config.StorageConfig
+	metrics      *observability.Metrics
 }
 
-func NewBrokerServer(logger *slog.Logger, topicManager *topic.Manager, offsets *offsets.Store, storageCfg config.StorageConfig) *BrokerServer {
+func NewBrokerServer(logger *slog.Logger, topicManager *topic.Manager, offsets *offsets.Store, storageCfg config.StorageConfig, metrics *observability.Metrics) *BrokerServer {
 	return &BrokerServer{
 		logger:       logger,
 		topicManager: topicManager,
 		offsets:      offsets,
 		storageCfg:   storageCfg,
+		metrics:      metrics,
 	}
 }
 
-func (b *BrokerServer) Produce(ctx context.Context, req *brokerpb.ProduceRequest) (*brokerpb.ProduceResponse, error) {
+func (b *BrokerServer) Produce(ctx context.Context, req *brokerpb.ProduceRequest) (resp *brokerpb.ProduceResponse, err error) {
+	start := time.Now()
+	defer func() {
+		if b.metrics != nil {
+			statusLbl := grpcStatusLabel(err)
+			b.metrics.ProduceRequests.WithLabelValues("produce", statusLbl).Inc()
+			b.metrics.ProduceDuration.WithLabelValues("produce", statusLbl).Observe(time.Since(start).Seconds())
+		}
+	}()
+
 	if len(req.GetRecords()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "cannot produce empty record batch")
 	}
@@ -89,7 +102,16 @@ func (b *BrokerServer) Produce(ctx context.Context, req *brokerpb.ProduceRequest
 	}, nil
 }
 
-func (b *BrokerServer) Fetch(ctx context.Context, req *brokerpb.FetchRequest) (*brokerpb.FetchResponse, error) {
+func (b *BrokerServer) Fetch(ctx context.Context, req *brokerpb.FetchRequest) (resp *brokerpb.FetchResponse, err error) {
+	start := time.Now()
+	defer func() {
+		if b.metrics != nil {
+			statusLbl := grpcStatusLabel(err)
+			b.metrics.FetchRequests.WithLabelValues("fetch", statusLbl).Inc()
+			b.metrics.FetchDuration.WithLabelValues("fetch", statusLbl).Observe(time.Since(start).Seconds())
+		}
+	}()
+
 	if req.GetMaxBytes() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "max_bytes must be greater than zero")
 	}
@@ -137,7 +159,14 @@ func (b *BrokerServer) Fetch(ctx context.Context, req *brokerpb.FetchRequest) (*
 	}, nil
 }
 
-func (b *BrokerServer) CommitOffset(ctx context.Context, req *brokerpb.CommitOffsetRequest) (*brokerpb.CommitOffsetResponse, error) {
+func (b *BrokerServer) CommitOffset(ctx context.Context, req *brokerpb.CommitOffsetRequest) (resp *brokerpb.CommitOffsetResponse, err error) {
+	defer func() {
+		if b.metrics != nil {
+			statusLbl := grpcStatusLabel(err)
+			b.metrics.OffsetCommits.WithLabelValues("commit_offset", statusLbl).Inc()
+		}
+	}()
+
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request cannot be nil")
 	}
@@ -215,4 +244,30 @@ func recordPayloadSize(r *brokerpb.Record) int {
 		size += len(h.GetKey()) + len(h.GetValue())
 	}
 	return size
+}
+
+func grpcStatusLabel(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return "internal"
+	}
+	switch st.Code() {
+	case codes.OK:
+		return "ok"
+	case codes.InvalidArgument:
+		return "invalid_argument"
+	case codes.NotFound:
+		return "not_found"
+	case codes.OutOfRange:
+		return "out_of_range"
+	case codes.ResourceExhausted:
+		return "resource_exhausted"
+	case codes.Unavailable:
+		return "unavailable"
+	default:
+		return "internal"
+	}
 }

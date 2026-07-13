@@ -13,7 +13,7 @@ import (
 func TestStore_AppendAndReadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 
-	store, err := OpenStore(dir, 1024*1024, 10000, 4096, "sync", nil)
+	store, err := OpenStore(dir, 1024*1024, 10000, 4096, "sync", nil, nil)
 	if err != nil {
 		t.Fatalf("failed to open store: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestStore_AppendAndReadRoundTrip(t *testing.T) {
 		t.Fatalf("close failed: %v", err)
 	}
 
-	recoveredStore, err := OpenStore(dir, 1024*1024, 10000, 4096, "sync", nil)
+	recoveredStore, err := OpenStore(dir, 1024*1024, 10000, 4096, "sync", nil, nil)
 	if err != nil {
 		t.Fatalf("failed to reopen store: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestStore_Rollover(t *testing.T) {
 	dir := t.TempDir()
 
 	// Set segment max size very small (e.g. 80 bytes) so each batch triggers rollover
-	store, err := OpenStore(dir, 80, 1000, 4096, "sync", nil)
+	store, err := OpenStore(dir, 80, 1000, 4096, "sync", nil, nil)
 	if err != nil {
 		t.Fatalf("failed to open store: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestStore_Rollover(t *testing.T) {
 func TestStore_IdempotentCloseAndErrors(t *testing.T) {
 	dir := t.TempDir()
 
-	store, err := OpenStore(dir, 1024, 1000, 4096, "sync", nil)
+	store, err := OpenStore(dir, 1024, 1000, 4096, "sync", nil, nil)
 	if err != nil {
 		t.Fatalf("failed to open store: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestStore_IdempotentCloseAndErrors(t *testing.T) {
 func TestStore_OffsetDiscontinuityValidation(t *testing.T) {
 	dir := t.TempDir()
 
-	store1, err := OpenStore(dir, 1024, 1000, 4096, "sync", nil)
+	store1, err := OpenStore(dir, 1024, 1000, 4096, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestStore_OffsetDiscontinuityValidation(t *testing.T) {
 	}
 
 	// Open store should fail due to offset discontinuity (base 0 missing, starting with 10 but expected 0)
-	_, err = OpenStore(dir, 1024, 1000, 4096, "sync", nil)
+	_, err = OpenStore(dir, 1024, 1000, 4096, "sync", nil, nil)
 	if err == nil {
 		t.Error("expected error opening discontinuous store, got nil")
 	}
@@ -202,7 +202,7 @@ func TestStore_BatchSizeLimits(t *testing.T) {
 	// Total encoded batch = 33 + 26 = 59 bytes.
 
 	// Open store with maxBatchBytes exactly at 59 bytes.
-	store, err := OpenStore(dir, 1024, 59, 4096, "sync", nil)
+	store, err := OpenStore(dir, 1024, 59, 4096, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestStore_BatchSizeLimits(t *testing.T) {
 func TestStore_ConcurrentReaders(t *testing.T) {
 	dir := t.TempDir()
 
-	store, err := OpenStore(dir, 1024*1024, 10000, 4096, "sync", nil)
+	store, err := OpenStore(dir, 1024*1024, 10000, 4096, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestStore_ConcurrentReaders(t *testing.T) {
 
 func TestStore_WriteFailedPoisoning(t *testing.T) {
 	dir := t.TempDir()
-	store, err := OpenStore(dir, 1024, 1000, 4096, "sync", nil)
+	store, err := OpenStore(dir, 1024, 1000, 4096, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func TestStore_WriteFailedPoisoning(t *testing.T) {
 
 func TestStore_FirstIndexEntryZeroZeroAndInterval(t *testing.T) {
 	dir := t.TempDir()
-	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestStore_FirstIndexEntryZeroZeroAndInterval(t *testing.T) {
 
 func TestStore_IndexReconstructionTruncatedAndStale(t *testing.T) {
 	dir := t.TempDir()
-	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestStore_IndexReconstructionTruncatedAndStale(t *testing.T) {
 	}
 
 	// Reopen. Should successfully rebuild index from log
-	store2, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	store2, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil, nil)
 	if err != nil {
 		t.Fatalf("failed to reopen after truncated index: %v", err)
 	}
@@ -371,7 +371,7 @@ func TestStore_IndexReconstructionTruncatedAndStale(t *testing.T) {
 
 func TestStore_ActiveSegmentIncompleteTailTruncates(t *testing.T) {
 	dir := t.TempDir()
-	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +391,7 @@ func TestStore_ActiveSegmentIncompleteTailTruncates(t *testing.T) {
 	f.Close()
 
 	// Reopen. Should truncate active segment tail cleanly
-	store2, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	store2, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil, nil)
 	if err != nil {
 		t.Fatalf("failed to reopen: %v", err)
 	}
@@ -408,7 +408,7 @@ func TestStore_ActiveSegmentIncompleteTailTruncates(t *testing.T) {
 
 func TestStore_ActiveSegmentBadCrcFails(t *testing.T) {
 	dir := t.TempDir()
-	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +429,7 @@ func TestStore_ActiveSegmentBadCrcFails(t *testing.T) {
 	f.Close()
 
 	// Reopen should fail because active segment contains fatal corruption in fully-written batch
-	_, err = OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	_, err = OpenStore(dir, 1024*1024, 10000, 10, "sync", nil, nil)
 	if err == nil {
 		t.Error("expected startup to fail for active segment bad CRC, got nil")
 	}
@@ -439,7 +439,7 @@ func TestStore_CrossSegmentRead(t *testing.T) {
 	dir := t.TempDir()
 
 	// Create a store with very small segmentMaxBytes so it rolls over
-	store, err := OpenStore(dir, 65, 1000, 10, "sync", nil)
+	store, err := OpenStore(dir, 65, 1000, 10, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,7 +476,7 @@ func TestStore_OrphanIndexFileIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil)
+	store, err := OpenStore(dir, 1024*1024, 10000, 10, "sync", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

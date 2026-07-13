@@ -37,3 +37,6 @@ jobs:
 
     - name: Build All Packages
       run: go build -v ./...
+
+    - name: Build Docker image
+      run: docker build -t distributed-message-broker:test .

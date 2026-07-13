@@ -18,9 +18,9 @@ type Log struct {
 }
 
 // NewLog constructs a partition log that delegates all operations to storage.Store.
-func NewLog(topic string, partitionID uint32, dataDir string, segmentMaxBytes int64, maxBatchBytes int64, indexIntervalBytes int, flushMode string, clock Clock) (*Log, error) {
+func NewLog(topic string, partitionID uint32, dataDir string, segmentMaxBytes int64, maxBatchBytes int64, indexIntervalBytes int, flushMode string, clock Clock, observer storage.Observer) (*Log, error) {
 	dir := filepath.Join(dataDir, "topics", topic, fmt.Sprintf("partition-%d", partitionID))
-	store, err := storage.OpenStore(dir, segmentMaxBytes, maxBatchBytes, indexIntervalBytes, flushMode, clock)
+	store, err := storage.OpenStore(dir, segmentMaxBytes, maxBatchBytes, indexIntervalBytes, flushMode, clock, observer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open partition store for topic %q partition %d: %w", topic, partitionID, err)
 	}

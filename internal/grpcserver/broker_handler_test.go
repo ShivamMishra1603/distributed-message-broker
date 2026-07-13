@@ -29,7 +29,7 @@ func startBrokerBufServer(t *testing.T, mgr *topic.Manager, storageCfg config.St
 		t.Fatalf("failed to open offsets store: %v", err)
 	}
 
-	brokerSrv := NewBrokerServer(logger, mgr, ostore, storageCfg)
+	brokerSrv := NewBrokerServer(logger, mgr, ostore, storageCfg, nil)
 
 	s := grpc.NewServer()
 	brokerpb.RegisterBrokerServiceServer(s, brokerSrv)
@@ -76,7 +76,7 @@ func TestBrokerServer_ProduceAndFetch(t *testing.T) {
 		FlushMode:          "sync",
 	}
 
-	mgr, err := topic.NewManager(dir, storageCfg.SegmentMaxBytes, int64(storageCfg.MaxBatchBytes), storageCfg.IndexIntervalBytes, storageCfg.FlushMode, nil)
+	mgr, err := topic.NewManager(dir, storageCfg.SegmentMaxBytes, int64(storageCfg.MaxBatchBytes), storageCfg.IndexIntervalBytes, storageCfg.FlushMode, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestBrokerServer_LimitsAndFailures(t *testing.T) {
 		FlushMode:          "sync",
 	}
 
-	mgr, err := topic.NewManager(dir, storageCfg.SegmentMaxBytes, int64(storageCfg.MaxBatchBytes), storageCfg.IndexIntervalBytes, storageCfg.FlushMode, nil)
+	mgr, err := topic.NewManager(dir, storageCfg.SegmentMaxBytes, int64(storageCfg.MaxBatchBytes), storageCfg.IndexIntervalBytes, storageCfg.FlushMode, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
