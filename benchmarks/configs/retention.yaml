@@ -10,8 +10,8 @@ storage:
   flush_mode: "sync"
 
 retention:
-  default_max_age: 168h
-  default_max_partition_bytes: 3145728 # 3 MiB partition limit
+  max_age: 168h
+  max_partition_bytes: 3145728 # 3 MiB partition limit
   check_interval: 1s # 1 second check ticker
 
 observability:
