@@ -20,26 +20,26 @@ type AcknowledgedRange struct {
 }
 
 type ProducerBench struct {
-	conn            *grpc.ClientConn
-	topic           string
-	msgSize         int
-	total           int64
-	concurrency     int
-	batchSize       int
-	partition       int // -1 for round-robin
-	failFast        bool
-	requestTimeout  time.Duration
-	flushMode       string
-	runID           string
-	runNumber       int
-	warmup          bool
-	commitSHA       string
-	dirty           bool
-	buildTime       string
-	goVersion       string
-	osName          string
-	archName        string
-	brokerVersion   string
+	conn           *grpc.ClientConn
+	topic          string
+	msgSize        int
+	total          int64
+	concurrency    int
+	batchSize      int
+	partition      int // -1 for round-robin
+	failFast       bool
+	requestTimeout time.Duration
+	flushMode      string
+	runID          string
+	runNumber      int
+	warmup         bool
+	commitSHA      string
+	dirty          bool
+	buildTime      string
+	goVersion      string
+	osName         string
+	archName       string
+	brokerVersion  string
 
 	// Latency sampler
 	sampler *Sampler
