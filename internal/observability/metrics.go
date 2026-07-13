@@ -218,9 +218,9 @@ func NewMetrics() *Metrics {
 
 // PartitionObserver implements storage.Observer for a fixed partition.
 type PartitionObserver struct {
-	metrics     *Metrics
-	topic       string
-	partition   string
+	metrics   *Metrics
+	topic     string
+	partition string
 }
 
 var _ storage.Observer = (*PartitionObserver)(nil)

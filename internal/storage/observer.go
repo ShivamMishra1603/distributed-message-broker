@@ -21,8 +21,8 @@ type NoopObserver struct{}
 
 func (NoopObserver) ObserveAppend(duration time.Duration, records int, bytes int, err error) {}
 func (NoopObserver) ObserveRead(duration time.Duration, records int, bytes int, err error)   {}
-func (NoopObserver) ObserveFsync(duration time.Duration, err error)                        {}
-func (NoopObserver) ObserveRecovery(duration time.Duration, err error)                     {}
-func (NoopObserver) IndexRebuilt()                                                         {}
-func (NoopObserver) SegmentDeleted()                                                       {}
-func (NoopObserver) SetPartitionState(logBytes int64, segmentCount int)                    {}
+func (NoopObserver) ObserveFsync(duration time.Duration, err error)                          {}
+func (NoopObserver) ObserveRecovery(duration time.Duration, err error)                       {}
+func (NoopObserver) IndexRebuilt()                                                           {}
+func (NoopObserver) SegmentDeleted()                                                         {}
+func (NoopObserver) SetPartitionState(logBytes int64, segmentCount int)                      {}
