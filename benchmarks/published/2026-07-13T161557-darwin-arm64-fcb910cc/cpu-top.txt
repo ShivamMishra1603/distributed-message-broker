@@ -1,0 +1,100 @@
+File: broker
+Type: cpu
+Time: 2026-07-13 16:36:14 EDT
+Duration: 5.14s, Total samples = 400ms ( 7.78%)
+Showing nodes accounting for 400ms, 100% of 400ms total
+      flat  flat%   sum%        cum   cum%
+     100ms 25.00% 25.00%      100ms 25.00%  runtime.fcntl
+      70ms 17.50% 42.50%       70ms 17.50%  runtime.usleep
+      60ms 15.00% 57.50%       60ms 15.00%  syscall.syscall6
+      50ms 12.50% 70.00%       50ms 12.50%  runtime.pthread_cond_timedwait_relative_np
+      50ms 12.50% 82.50%       50ms 12.50%  runtime.pthread_cond_wait
+      30ms  7.50% 90.00%       30ms  7.50%  syscall.syscall
+      20ms  5.00% 95.00%       20ms  5.00%  runtime.kevent
+      20ms  5.00%   100%       20ms  5.00%  runtime.pthread_kill
+         0     0%   100%       10ms  2.50%  bufio.(*Reader).Read
+         0     0%   100%      160ms 40.00%  github.com/ShivamMishra1603/distributed-message-broker/gen/proto/broker/v1._BrokerService_Produce_Handler
+         0     0%   100%      160ms 40.00%  github.com/ShivamMishra1603/distributed-message-broker/internal/grpcserver.(*BrokerServer).Produce
+         0     0%   100%      160ms 40.00%  github.com/ShivamMishra1603/distributed-message-broker/internal/partition.(*Log).Append
+         0     0%   100%       60ms 15.00%  github.com/ShivamMishra1603/distributed-message-broker/internal/storage.(*Segment).Append
+         0     0%   100%      100ms 25.00%  github.com/ShivamMishra1603/distributed-message-broker/internal/storage.(*Segment).Flush
+         0     0%   100%       20ms  5.00%  github.com/ShivamMishra1603/distributed-message-broker/internal/storage.(*Segment).FlushIndex
+         0     0%   100%      160ms 40.00%  github.com/ShivamMishra1603/distributed-message-broker/internal/storage.(*Store).Append
+         0     0%   100%       10ms  2.50%  golang.org/x/net/http2.(*Framer).ReadFrameHeader
+         0     0%   100%       10ms  2.50%  golang.org/x/net/http2.readFrameHeader
+         0     0%   100%       10ms  2.50%  google.golang.org/grpc.(*Server).handleRawConn.func1
+         0     0%   100%      160ms 40.00%  google.golang.org/grpc.(*Server).handleStream
+         0     0%   100%      160ms 40.00%  google.golang.org/grpc.(*Server).processUnaryRPC
+         0     0%   100%       10ms  2.50%  google.golang.org/grpc.(*Server).serveStreams
+         0     0%   100%      160ms 40.00%  google.golang.org/grpc.(*Server).serveStreams.func2.1
+         0     0%   100%       20ms  5.00%  google.golang.org/grpc/internal/transport.(*bufWriter).Flush
+         0     0%   100%       20ms  5.00%  google.golang.org/grpc/internal/transport.(*bufWriter).flushKeepBuffer
+         0     0%   100%       10ms  2.50%  google.golang.org/grpc/internal/transport.(*framer).readFrame
+         0     0%   100%       10ms  2.50%  google.golang.org/grpc/internal/transport.(*http2Server).HandleStreams
+         0     0%   100%       20ms  5.00%  google.golang.org/grpc/internal/transport.(*loopyWriter).run
+         0     0%   100%       20ms  5.00%  google.golang.org/grpc/internal/transport.NewServerTransport.func3
+         0     0%   100%      100ms 25.00%  internal/poll.(*FD).Fsync
+         0     0%   100%      100ms 25.00%  internal/poll.(*FD).Fsync.func1 (inline)
+         0     0%   100%       60ms 15.00%  internal/poll.(*FD).Pwrite
+         0     0%   100%       10ms  2.50%  internal/poll.(*FD).Read
+         0     0%   100%       20ms  5.00%  internal/poll.(*FD).Write
+         0     0%   100%      100ms 25.00%  internal/poll.ignoringEINTR (inline)
+         0     0%   100%       30ms  7.50%  internal/poll.ignoringEINTRIO (inline)
+         0     0%   100%      100ms 25.00%  internal/syscall/unix.Fcntl
+         0     0%   100%       10ms  2.50%  io.ReadAtLeast
+         0     0%   100%       10ms  2.50%  io.ReadFull (inline)
+         0     0%   100%       10ms  2.50%  net.(*conn).Read
+         0     0%   100%       20ms  5.00%  net.(*conn).Write
+         0     0%   100%       10ms  2.50%  net.(*netFD).Read
+         0     0%   100%       20ms  5.00%  net.(*netFD).Write
+         0     0%   100%      100ms 25.00%  os.(*File).Sync
+         0     0%   100%       60ms 15.00%  os.(*File).WriteAt
+         0     0%   100%       60ms 15.00%  os.(*File).pwrite (inline)
+         0     0%   100%       10ms  2.50%  runtime.(*mcache).prepareForSweep
+         0     0%   100%       10ms  2.50%  runtime.(*mcache).releaseAll
+         0     0%   100%       10ms  2.50%  runtime.(*mcentral).uncacheSpan
+         0     0%   100%       10ms  2.50%  runtime.(*mheap).freeSpan (inline)
+         0     0%   100%       10ms  2.50%  runtime.(*sweepLocked).sweep
+         0     0%   100%       10ms  2.50%  runtime.(*sweepLocked).sweep.(*mheap).freeSpan.func2
+         0     0%   100%       70ms 17.50%  runtime.findRunnable
+         0     0%   100%       40ms 10.00%  runtime.forEachPInternal
+         0     0%   100%       80ms 20.00%  runtime.gcBgMarkWorker.func2
+         0     0%   100%       80ms 20.00%  runtime.gcDrain
+         0     0%   100%       80ms 20.00%  runtime.gcDrainMarkWorkerDedicated (inline)
+         0     0%   100%       30ms  7.50%  runtime.gcMarkDone.forEachP.func5
+         0     0%   100%       10ms  2.50%  runtime.gcMarkTermination.forEachP.func6
+         0     0%   100%       10ms  2.50%  runtime.gcMarkTermination.func4
+         0     0%   100%       20ms  5.00%  runtime.gcStart.func2
+         0     0%   100%       10ms  2.50%  runtime.gcstopm
+         0     0%   100%       10ms  2.50%  runtime.goexit0
+         0     0%   100%       10ms  2.50%  runtime.gopreempt_m (inline)
+         0     0%   100%       10ms  2.50%  runtime.goschedImpl
+         0     0%   100%       10ms  2.50%  runtime.lock
+         0     0%   100%       10ms  2.50%  runtime.lock2
+         0     0%   100%       10ms  2.50%  runtime.lockWithRank (inline)
+         0     0%   100%       50ms 12.50%  runtime.mPark (inline)
+         0     0%   100%       80ms 20.00%  runtime.markroot
+         0     0%   100%       80ms 20.00%  runtime.markroot.func1
+         0     0%   100%       60ms 15.00%  runtime.mcall
+         0     0%   100%       10ms  2.50%  runtime.morestack
+         0     0%   100%       20ms  5.00%  runtime.netpoll
+         0     0%   100%       10ms  2.50%  runtime.newstack
+         0     0%   100%       50ms 12.50%  runtime.notesleep
+         0     0%   100%       50ms 12.50%  runtime.notetsleep
+         0     0%   100%       50ms 12.50%  runtime.notetsleep_internal
+         0     0%   100%       70ms 17.50%  runtime.osyield (inline)
+         0     0%   100%       50ms 12.50%  runtime.park_m
+         0     0%   100%       20ms  5.00%  runtime.preemptM
+         0     0%   100%       70ms 17.50%  runtime.schedule
+         0     0%   100%      100ms 25.00%  runtime.semasleep
+         0     0%   100%       20ms  5.00%  runtime.signalM (inline)
+         0     0%   100%       20ms  5.00%  runtime.stopTheWorldWithSema
+         0     0%   100%       50ms 12.50%  runtime.stopm
+         0     0%   100%       80ms 20.00%  runtime.suspendG
+         0     0%   100%      140ms 35.00%  runtime.systemstack
+         0     0%   100%       60ms 15.00%  syscall.Pwrite (inline)
+         0     0%   100%       10ms  2.50%  syscall.Read (inline)
+         0     0%   100%       20ms  5.00%  syscall.Write (inline)
+         0     0%   100%       60ms 15.00%  syscall.pwrite
+         0     0%   100%       10ms  2.50%  syscall.read
+         0     0%   100%       20ms  5.00%  syscall.write

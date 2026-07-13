@@ -1,0 +1,17 @@
+Processes: 774 total, 2 running, 772 sleeping, 4011 threads 
+2026/07/13 16:36:23
+Load Avg: 5.06, 3.71, 3.15 
+CPU usage: 2.69% user, 9.55% sys, 87.74% idle 
+SharedLibs: 1081M resident, 102M data, 89M linkedit.
+MemRegions: 718619 total, 7822M resident, 353M private, 2141M shared.
+PhysMem: 19G used (1853M wired, 4236M compressor), 4238M unused.
+VM: 373T vsize, 6144M framework vsize, 0(0) swapins, 0(0) swapouts.
+Networks: packets: 62862435/385G in, 62845875/385G out.
+Disks: 1040904/47G read, 11310541/123G written.
+
+PID    COMMAND         %CPU TIME     #TH #WQ #PORTS MEM   PURG  CMPRS PGRP  PPID  STATE    BOOSTS %CPU_ME %CPU_OTHRS UID FAULTS COW MSGSENT MSGRECV SYSBSD SYSMACH CSW    PAGEINS IDLEW POWER INSTRS CYCLES JETPRI USER         #MREGS RPRVT VPRVT VSIZE KPRVT KSHRD
+11191  top             0.0  00:00.41 1/1 0   16     4592K 0B    0B    10220 10220 running  *0[1]  0.00000 0.00000    0   1371   86  1492826 746412  4043   752804  12     8       0     0.0   0      0      180    root         N/A    N/A   N/A   N/A   N/A   N/A  
+11155  broker          0.0  00:00.97 16  0   40     15M   0B    0B    10220 10220 sleeping *0[1]  0.00000 0.00000    501 2188   201 2064    1025    121416 1200    126680 0       28070 0.0   0      0      180    shivammishra N/A    N/A   N/A   N/A   N/A   N/A  
+11123  biomesyncd      0.0  00:00.55 3   2   88     5056K 8576K 0B    11123 1     sleeping *0[1]  0.00000 0.00000    501 2457   166 683     254     12057  3418    1097   42      1     0.0   0      0      0      shivammishra N/A    N/A   N/A   N/A   N/A   N/A  
+10909  mdworker_shared 0.0  00:00.06 3   1   44     2608K 0B    0B    10909 1     sleeping *0[1]  0.00000 0.00000    501 997    109 435     191     955    454     220    6       0     0.0   0      0      0      shivammishra N/A    N/A   N/A   N/A   N/A   N/A  
+10908  mdworker_shared 0.0  00:00.07 3   1   47     2672K 0B    0B    10908 1     sleeping *0[1]  0.00000 0.00000    501 1536   112 458     198     1061   489     247    6       0     0.0   0      0      0      shivammishra N/A    N/A   N/A   N/A   N/A   N/A  

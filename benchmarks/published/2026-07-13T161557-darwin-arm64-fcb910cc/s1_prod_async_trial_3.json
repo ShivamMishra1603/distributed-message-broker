@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "run_id": "",
+    "run_number": 3,
+    "warmup": false,
+    "commit": "fcb910cc",
+    "dirty": false,
+    "build_time": "2026-07-13T20:15:55Z",
+    "go_version": "go1.25.1",
+    "os": "darwin",
+    "arch": "arm64",
+    "broker_version": "1.0.0"
+  },
+  "topic": "bench-topic",
+  "partitions": 4,
+  "partition_mode": "round-robin",
+  "flush_mode": "async",
+  "requested_records": 0,
+  "acknowledged_records": 32188700,
+  "failed_records": 0,
+  "rpc_count": 321887,
+  "record_size_bytes": 100,
+  "batch_size": 100,
+  "concurrency": 4,
+  "duration_seconds": 10.000027417,
+  "messages_per_second": 3218861.1748483167,
+  "payload_mib_per_second": 306.97452305300874,
+  "latency": {
+    "min_ms": 0.046709,
+    "mean_ms": 0.117408,
+    "p50_ms": 0.103,
+    "p95_ms": 0.187458,
+    "p99_ms": 0.289084,
+    "max_ms": 36.956708
+  },
+  "errors": {}
+}

@@ -1,0 +1,10 @@
+{
+  "date": "Mon Jul 13 16:15:57 EDT 2026",
+  "commit": "fcb910cc",
+  "dirty": false,
+  "os": "Darwin",
+  "arch": "arm64",
+  "go_version": "go version go1.25.1 darwin/arm64",
+  "cpu": "Apple M4",
+  "memory": "25769803776"
+}

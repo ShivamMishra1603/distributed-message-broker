@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "run_id": "",
+    "run_number": 3,
+    "warmup": false,
+    "commit": "fcb910cc",
+    "dirty": false,
+    "build_time": "2026-07-13T20:15:55Z",
+    "go_version": "go1.25.1",
+    "os": "darwin",
+    "arch": "arm64",
+    "broker_version": "1.0.0"
+  },
+  "topic": "bench-s3-1024",
+  "partitions": 4,
+  "partition_mode": "round-robin",
+  "flush_mode": "sync",
+  "requested_records": 0,
+  "acknowledged_records": 151500,
+  "failed_records": 0,
+  "rpc_count": 1515,
+  "record_size_bytes": 1024,
+  "batch_size": 100,
+  "concurrency": 4,
+  "duration_seconds": 10.022444792,
+  "messages_per_second": 15116.072290159042,
+  "payload_mib_per_second": 14.761789345858439,
+  "latency": {
+    "min_ms": 11.960042,
+    "mean_ms": 26.418083,
+    "p50_ms": 27.93,
+    "p95_ms": 32.007167,
+    "p99_ms": 36.233375,
+    "max_ms": 101.805625
+  },
+  "errors": {}
+}

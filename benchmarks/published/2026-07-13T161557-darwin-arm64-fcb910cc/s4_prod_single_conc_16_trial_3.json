@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "run_id": "",
+    "run_number": 3,
+    "warmup": false,
+    "commit": "fcb910cc",
+    "dirty": false,
+    "build_time": "2026-07-13T20:15:55Z",
+    "go_version": "go1.25.1",
+    "os": "darwin",
+    "arch": "arm64",
+    "broker_version": "1.0.0"
+  },
+  "topic": "bench-s4-single-16",
+  "partitions": 1,
+  "partition_mode": "explicit",
+  "flush_mode": "sync",
+  "requested_records": 0,
+  "acknowledged_records": 126000,
+  "failed_records": 0,
+  "rpc_count": 1260,
+  "record_size_bytes": 100,
+  "batch_size": 100,
+  "concurrency": 16,
+  "duration_seconds": 10.124417958,
+  "messages_per_second": 12445.15986229497,
+  "payload_mib_per_second": 1.1868629324240656,
+  "latency": {
+    "min_ms": 8.292334,
+    "mean_ms": 127.768443,
+    "p50_ms": 127.990375,
+    "p95_ms": 130.093417,
+    "p99_ms": 142.346,
+    "max_ms": 154.16575
+  },
+  "errors": {}
+}
