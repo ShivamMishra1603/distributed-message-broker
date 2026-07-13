@@ -13,3 +13,8 @@ storage:
 observability:
   log_level: "info"
   log_format: "json"
+
+retention:
+  max_age: "168h"
+  max_partition_bytes: 10737418240
+  check_interval: "5m"

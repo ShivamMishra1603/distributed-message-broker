@@ -28,6 +28,8 @@ type Segment struct {
 	indexSize           int64
 	indexDirty          bool
 	active              bool
+	maxTimestamp        int64
+	handlesClosed       bool
 }
 
 // NewSegment constructs or opens a segment log file and its corresponding sparse index file.
@@ -212,6 +214,10 @@ func (s *Segment) FlushIndex() error {
 
 // Close closes both file handles.
 func (s *Segment) Close() error {
+	if s.handlesClosed {
+		return nil
+	}
+	s.handlesClosed = true
 	return errors.Join(s.file.Close(), s.indexFile.Close())
 }
 
@@ -223,4 +229,14 @@ func (s *Segment) Size() int64 {
 // BaseOffset returns the segment's base offset.
 func (s *Segment) BaseOffset() uint64 {
 	return s.baseOffset
+}
+
+// MaxTimestamp returns the segment's max record timestamp.
+func (s *Segment) MaxTimestamp() int64 {
+	return s.maxTimestamp
+}
+
+// SetMaxTimestamp sets the segment's max record timestamp.
+func (s *Segment) SetMaxTimestamp(ts int64) {
+	s.maxTimestamp = ts
 }

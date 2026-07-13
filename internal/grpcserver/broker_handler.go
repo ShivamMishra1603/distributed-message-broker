@@ -8,6 +8,7 @@ import (
 	brokerpb "github.com/ShivamMishra1603/distributed-message-broker/gen/proto/broker/v1"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/config"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/model"
+	"github.com/ShivamMishra1603/distributed-message-broker/internal/offsets"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/storage"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/topic"
 	"google.golang.org/grpc/codes"
@@ -18,13 +19,15 @@ type BrokerServer struct {
 	brokerpb.UnimplementedBrokerServiceServer
 	logger       *slog.Logger
 	topicManager *topic.Manager
+	offsets      *offsets.Store
 	storageCfg   config.StorageConfig
 }
 
-func NewBrokerServer(logger *slog.Logger, topicManager *topic.Manager, storageCfg config.StorageConfig) *BrokerServer {
+func NewBrokerServer(logger *slog.Logger, topicManager *topic.Manager, offsets *offsets.Store, storageCfg config.StorageConfig) *BrokerServer {
 	return &BrokerServer{
 		logger:       logger,
 		topicManager: topicManager,
+		offsets:      offsets,
 		storageCfg:   storageCfg,
 	}
 }
@@ -135,11 +138,75 @@ func (b *BrokerServer) Fetch(ctx context.Context, req *brokerpb.FetchRequest) (*
 }
 
 func (b *BrokerServer) CommitOffset(ctx context.Context, req *brokerpb.CommitOffsetRequest) (*brokerpb.CommitOffsetResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "CommitOffset is not implemented in Milestone 3")
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request cannot be nil")
+	}
+	if req.GetConsumerGroup() == "" {
+		return nil, status.Error(codes.InvalidArgument, "consumer_group cannot be empty")
+	}
+
+	// 1. Resolve partition for validation
+	partition, err := b.topicManager.GetPartition(req.GetTopic(), req.GetPartition())
+	if err != nil {
+		if errors.Is(err, topic.ErrTopicNotFound) || errors.Is(err, topic.ErrPartitionNotFound) {
+			return nil, status.Errorf(codes.NotFound, "topic or partition not found: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to resolve partition: %v", err)
+	}
+
+	// 2. Validate offset boundaries
+	earliest := partition.EarliestOffset()
+	end := partition.LogEndOffset()
+	nextOffset := req.GetNextOffset()
+	if nextOffset < earliest || nextOffset > end {
+		return nil, status.Errorf(codes.OutOfRange, "committed offset %d is out of range [%d, %d]", nextOffset, earliest, end)
+	}
+
+	// 3. Commit to persistent offset store
+	err = b.offsets.Commit(req.GetConsumerGroup(), req.GetTopic(), req.GetPartition(), nextOffset)
+	if err != nil {
+		if errors.Is(err, offsets.ErrOffsetStoreUnavailable) || errors.Is(err, offsets.ErrOffsetStoreClosed) {
+			return nil, status.Errorf(codes.Unavailable, "offset store is currently unavailable: %v", err)
+		}
+		if errors.Is(err, offsets.ErrInvalidArgument) {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid argument for commit: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to commit offset: %v", err)
+	}
+
+	return &brokerpb.CommitOffsetResponse{}, nil
 }
 
 func (b *BrokerServer) FetchCommittedOffset(ctx context.Context, req *brokerpb.FetchCommittedOffsetRequest) (*brokerpb.FetchCommittedOffsetResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "FetchCommittedOffset is not implemented in Milestone 3")
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request cannot be nil")
+	}
+	if req.GetConsumerGroup() == "" {
+		return nil, status.Error(codes.InvalidArgument, "consumer_group cannot be empty")
+	}
+
+	// 1. Resolve partition for validation
+	_, err := b.topicManager.GetPartition(req.GetTopic(), req.GetPartition())
+	if err != nil {
+		if errors.Is(err, topic.ErrTopicNotFound) || errors.Is(err, topic.ErrPartitionNotFound) {
+			return nil, status.Errorf(codes.NotFound, "topic or partition not found: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to resolve partition: %v", err)
+	}
+
+	// 2. Retrieve offset
+	val, found, err := b.offsets.Get(req.GetConsumerGroup(), req.GetTopic(), req.GetPartition())
+	if err != nil {
+		if errors.Is(err, offsets.ErrOffsetStoreUnavailable) || errors.Is(err, offsets.ErrOffsetStoreClosed) {
+			return nil, status.Errorf(codes.Unavailable, "offset store is currently unavailable: %v", err)
+		}
+		return nil, status.Errorf(codes.Internal, "failed to fetch committed offset: %v", err)
+	}
+
+	return &brokerpb.FetchCommittedOffsetResponse{
+		Found:      found,
+		NextOffset: val,
+	}, nil
 }
 
 func recordPayloadSize(r *brokerpb.Record) int {

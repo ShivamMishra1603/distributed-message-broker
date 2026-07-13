@@ -5,11 +5,13 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"path/filepath"
 	"testing"
 	"time"
 
 	brokerpb "github.com/ShivamMishra1603/distributed-message-broker/gen/proto/broker/v1"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/config"
+	"github.com/ShivamMishra1603/distributed-message-broker/internal/offsets"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/topic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -21,7 +23,13 @@ import (
 func startBrokerBufServer(t *testing.T, mgr *topic.Manager, storageCfg config.StorageConfig) (brokerpb.BrokerServiceClient, func()) {
 	lis := bufconn.Listen(1024 * 1024)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	brokerSrv := NewBrokerServer(logger, mgr, storageCfg)
+	offsetPath := filepath.Join(t.TempDir(), "offsets.log")
+	ostore, err := offsets.OpenStore(offsetPath, nil)
+	if err != nil {
+		t.Fatalf("failed to open offsets store: %v", err)
+	}
+
+	brokerSrv := NewBrokerServer(logger, mgr, ostore, storageCfg)
 
 	s := grpc.NewServer()
 	brokerpb.RegisterBrokerServiceServer(s, brokerSrv)
@@ -50,6 +58,7 @@ func startBrokerBufServer(t *testing.T, mgr *topic.Manager, storageCfg config.St
 		conn.Close()
 		s.Stop()
 		lis.Close()
+		ostore.Close()
 	}
 
 	return client, cleanup

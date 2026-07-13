@@ -232,6 +232,12 @@ func (s *Store) Append(records []model.Record) (baseOffset, lastOffset uint64, e
 		return 0, 0, err
 	}
 
+	for _, r := range records {
+		if r.Timestamp > s.activeSegment.maxTimestamp {
+			s.activeSegment.maxTimestamp = r.Timestamp
+		}
+	}
+
 	last := base + uint64(len(records)) - 1
 	s.logEndOffset = last + 1
 	s.activeSegment.nextOffset = s.logEndOffset
@@ -491,6 +497,9 @@ func (s *Store) recoverSegment(seg *Segment, active bool) (uint64, error) {
 			if r.Offset != expected {
 				return 0, fmt.Errorf("offset discontinuity inside batch in %q: expected %d, got %d", seg.path, expected, r.Offset)
 			}
+			if r.Timestamp > seg.maxTimestamp {
+				seg.maxTimestamp = r.Timestamp
+			}
 		}
 
 		expectedOffset = expectedOffset + uint64(len(recs))
@@ -606,6 +615,11 @@ func (s *Store) rebuildIndex(seg *Segment, validLogSize int64) error {
 		batchLength := binary.BigEndian.Uint32(headerBuf[5:9])
 		totalBatchSize := int64(9) + int64(batchLength)
 
+		batchMaxTimestamp := int64(binary.BigEndian.Uint64(headerBuf[25:33]))
+		if batchMaxTimestamp > seg.maxTimestamp {
+			seg.maxTimestamp = batchMaxTimestamp
+		}
+
 		relative := batchBaseOffset - seg.baseOffset
 		if relative > math.MaxUint32 {
 			tmpFile.Close()
@@ -711,4 +725,120 @@ func recordSize(record model.StoredRecord) int {
 	}
 	size += 16 // 8 byte offset + 8 byte timestamp
 	return size
+}
+
+// ApplyRetention deletes expired closed segments by age first, then by size.
+// It executes under s.mu.Lock().
+func (s *Store) ApplyRetention(maxAge time.Duration, maxPartitionBytes uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed || s.writeFailed {
+		return nil
+	}
+
+	var cleanupErrors []error
+
+	// 1. Time-Based retention: delete all expired closed segments by age, oldest first
+	cutoff := s.clock().UTC().Add(-maxAge).UnixMilli()
+
+	for {
+		if len(s.segments) <= 1 {
+			break // only active segment remains
+		}
+		oldest := s.segments[0]
+		if oldest == s.activeSegment {
+			break
+		}
+
+		if oldest.MaxTimestamp() <= cutoff {
+			if err := s.deleteSegmentAtIndex(0); err != nil {
+				cleanupErrors = append(cleanupErrors, err)
+				break
+			}
+		} else {
+			break
+		}
+	}
+
+	// 2. Size-Based retention: delete additional oldest closed segments
+	for {
+		if len(s.segments) <= 1 {
+			break
+		}
+		totalBytes, err := s.calculateTotalBytes()
+		if err != nil {
+			cleanupErrors = append(cleanupErrors, err)
+			break
+		}
+
+		if totalBytes <= maxPartitionBytes {
+			break
+		}
+
+		oldest := s.segments[0]
+		if oldest == s.activeSegment {
+			break // never delete the active segment
+		}
+
+		if err := s.deleteSegmentAtIndex(0); err != nil {
+			cleanupErrors = append(cleanupErrors, err)
+			break
+		}
+	}
+
+	if len(cleanupErrors) > 0 {
+		return fmt.Errorf("errors during retention cleanup: %w", errors.Join(cleanupErrors...))
+	}
+	return nil
+}
+
+func (s *Store) calculateTotalBytes() (uint64, error) {
+	var total uint64
+	for _, seg := range s.segments {
+		logInfo, err := os.Stat(seg.path)
+		if err != nil {
+			return 0, fmt.Errorf("failed to stat segment log %q: %w", seg.path, err)
+		}
+		indexInfo, err := os.Stat(seg.indexPath)
+		if err != nil {
+			return 0, fmt.Errorf("failed to stat segment index %q: %w", seg.indexPath, err)
+		}
+		total += uint64(logInfo.Size() + indexInfo.Size())
+	}
+	return total, nil
+}
+
+func (s *Store) deleteSegmentAtIndex(idx int) error {
+	seg := s.segments[idx]
+
+	// 1. Attempt to remove the authoritative log file first
+	if err := os.Remove(seg.path); err != nil {
+		return fmt.Errorf("failed to delete authoritative log file %q: %w", seg.path, err)
+	}
+
+	// 2. Immediately remove the segment from the in-memory view and update earliest offset
+	copy(s.segments[idx:], s.segments[idx+1:])
+	s.segments[len(s.segments)-1] = nil
+	s.segments = s.segments[:len(s.segments)-1]
+
+	if len(s.segments) > 0 {
+		s.earliestOffset = s.segments[0].baseOffset
+	}
+
+	// 3. Cleanup index file and handles (non-authoritative)
+	var errs []error
+	if err := os.Remove(seg.indexPath); err != nil && !os.IsNotExist(err) {
+		errs = append(errs, fmt.Errorf("failed to delete index file %q: %w", seg.indexPath, err))
+	}
+
+	if err := seg.Close(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to close segment handles: %w", err))
+	}
+
+	if err := syncDirectory(filepath.Dir(seg.path)); err != nil {
+		errs = append(errs, fmt.Errorf("failed to sync partition directory: %w", err))
+	}
+
+	return errors.Join(errs...)
 }

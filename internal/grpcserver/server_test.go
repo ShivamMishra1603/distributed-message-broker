@@ -5,10 +5,12 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/config"
+	"github.com/ShivamMishra1603/distributed-message-broker/internal/offsets"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/topic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -24,8 +26,14 @@ func TestServer_LifecycleAndHealth(t *testing.T) {
 	}
 	defer mgr.Close()
 
+	ostore, err := offsets.OpenStore(filepath.Join(dir, "offsets.log"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ostore.Close()
+
 	admin := NewAdminServer(logger, mgr)
-	broker := NewBrokerServer(logger, mgr, config.StorageConfig{
+	broker := NewBrokerServer(logger, mgr, ostore, config.StorageConfig{
 		DataDirectory:   dir,
 		MaxRecordBytes:  100,
 		MaxBatchBytes:   500,
@@ -121,8 +129,14 @@ func TestServer_ShutdownTimeoutReturnsError(t *testing.T) {
 	}
 	defer mgr.Close()
 
+	ostore1, err := offsets.OpenStore(filepath.Join(dir, "offsets1.log"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ostore1.Close()
+
 	admin := NewAdminServer(logger, mgr)
-	broker := NewBrokerServer(logger, mgr, config.StorageConfig{
+	broker := NewBrokerServer(logger, mgr, ostore1, config.StorageConfig{
 		DataDirectory:   dir,
 		MaxRecordBytes:  100,
 		MaxBatchBytes:   500,
@@ -164,8 +178,14 @@ func TestServer_BindError(t *testing.T) {
 	}
 	defer mgr.Close()
 
+	ostore2, err := offsets.OpenStore(filepath.Join(dir, "offsets2.log"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ostore2.Close()
+
 	admin := NewAdminServer(logger, mgr)
-	broker := NewBrokerServer(logger, mgr, config.StorageConfig{
+	broker := NewBrokerServer(logger, mgr, ostore2, config.StorageConfig{
 		DataDirectory:   dir,
 		MaxRecordBytes:  100,
 		MaxBatchBytes:   500,

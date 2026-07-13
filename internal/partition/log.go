@@ -3,6 +3,7 @@ package partition
 import (
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/model"
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/storage"
@@ -59,4 +60,9 @@ func (l *Log) EarliestOffset() uint64 {
 // Close gracefully closes the underlying store files.
 func (l *Log) Close() error {
 	return l.store.Close()
+}
+
+// ApplyRetention deletes expired log segments based on age or size configuration limits.
+func (l *Log) ApplyRetention(maxAge time.Duration, maxPartitionBytes uint64) error {
+	return l.store.ApplyRetention(maxAge, maxPartitionBytes)
 }

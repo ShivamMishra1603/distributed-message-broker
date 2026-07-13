@@ -1,6 +1,7 @@
 package topic
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/ShivamMishra1603/distributed-message-broker/internal/partition"
 )
@@ -71,14 +73,24 @@ type TopicsMetadata struct {
 
 // Manager orchestrates topic metadata and partition lifetime on disk.
 type Manager struct {
-	mu                 sync.RWMutex
-	topics             map[string]*Topic
-	dataDir            string
-	segmentMaxBytes    int64
-	maxBatchBytes      int64
-	indexIntervalBytes int
-	flushMode          string
-	logger             *slog.Logger
+	mu                   sync.RWMutex
+	topics               map[string]*Topic
+	dataDir              string
+	segmentMaxBytes      int64
+	maxBatchBytes        int64
+	indexIntervalBytes   int
+	flushMode            string
+	defaultMaxAgeSeconds uint64
+	defaultMaxBytes      uint64
+	logger               *slog.Logger
+}
+
+// SetRetentionDefaults configures defaults for topic retention policies when omitted.
+func (m *Manager) SetRetentionDefaults(maxAgeSeconds uint64, maxBytes uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.defaultMaxAgeSeconds = maxAgeSeconds
+	m.defaultMaxBytes = maxBytes
 }
 
 // NewManager loads metadata, reconstructs partitions from disk, and handles directory mappings.
@@ -183,6 +195,13 @@ func (m *Manager) CreateTopic(name string, partitionCount int, retention Retenti
 
 	if _, exists := m.topics[name]; exists {
 		return nil, ErrTopicExists
+	}
+
+	if retention.MaxAgeSeconds == 0 {
+		retention.MaxAgeSeconds = m.defaultMaxAgeSeconds
+	}
+	if retention.MaxBytes == 0 {
+		retention.MaxBytes = m.defaultMaxBytes
 	}
 
 	// 1. Create partition log folders and open stores
@@ -390,4 +409,41 @@ func syncDirectory(path string) error {
 	}
 	defer d.Close()
 	return d.Sync()
+}
+
+// ApplyRetention runs the retention policies on all partitions of all managed topics.
+// It checks context cancellation before and after calling partition retention to exit cleanly.
+func (m *Manager) ApplyRetention(ctx context.Context) {
+	m.mu.Lock()
+	// Get snapshots under the lock to iterate safely without holding manager lock during disk I/O.
+	type partInfo struct {
+		log            *partition.Log
+		maxAge         time.Duration
+		partitionBytes uint64
+	}
+	var targets []partInfo
+	for _, t := range m.topics {
+		maxAge := time.Duration(t.retention.MaxAgeSeconds) * time.Second
+		maxBytes := t.retention.MaxBytes
+		for _, p := range t.partitions {
+			targets = append(targets, partInfo{
+				log:            p,
+				maxAge:         maxAge,
+				partitionBytes: maxBytes,
+			})
+		}
+	}
+	m.mu.Unlock()
+
+	for _, target := range targets {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := target.log.ApplyRetention(target.maxAge, target.partitionBytes); err != nil {
+			m.logger.Error("failed to apply retention on partition", "err", err)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
 }

@@ -29,9 +29,18 @@ type ObservabilityConfig struct {
 	LogFormat string `yaml:"log_format"`
 }
 
+type RetentionConfig struct {
+	DefaultMaxAgeStr         string        `yaml:"max_age"`
+	DefaultMaxPartitionBytes uint64        `yaml:"max_partition_bytes"`
+	CheckIntervalStr         string        `yaml:"check_interval"`
+	DefaultMaxAge            time.Duration `yaml:"-"`
+	CheckInterval            time.Duration `yaml:"-"`
+}
+
 type Config struct {
 	Broker        BrokerConfig        `yaml:"broker"`
 	Storage       StorageConfig       `yaml:"storage"`
+	Retention     RetentionConfig     `yaml:"retention"`
 	Observability ObservabilityConfig `yaml:"observability"`
 }
 
@@ -49,6 +58,13 @@ func DefaultConfig() Config {
 			SegmentMaxBytes:    134217728, // 128 MiB
 			IndexIntervalBytes: 4096,      // 4 KiB
 			FlushMode:          "sync",
+		},
+		Retention: RetentionConfig{
+			DefaultMaxAgeStr:         "168h",
+			DefaultMaxPartitionBytes: 10737418240, // 10 GiB
+			CheckIntervalStr:         "5m",
+			DefaultMaxAge:            168 * time.Hour,
+			CheckInterval:            5 * time.Minute,
 		},
 		Observability: ObservabilityConfig{
 			LogLevel:  "info",
@@ -119,6 +135,18 @@ func Load(path string) (Config, error) {
 	if val := os.Getenv("BROKER_LOG_FORMAT"); val != "" {
 		cfg.Observability.LogFormat = val
 	}
+	if val := os.Getenv("BROKER_RETENTION_MAX_AGE"); val != "" {
+		cfg.Retention.DefaultMaxAgeStr = val
+	}
+	if val := os.Getenv("BROKER_RETENTION_MAX_PARTITION_BYTES"); val != "" {
+		var bytesVal uint64
+		if _, err := fmt.Sscanf(val, "%d", &bytesVal); err == nil {
+			cfg.Retention.DefaultMaxPartitionBytes = bytesVal
+		}
+	}
+	if val := os.Getenv("BROKER_RETENTION_CHECK_INTERVAL"); val != "" {
+		cfg.Retention.CheckIntervalStr = val
+	}
 
 	// 3. Validation and parsing of Durations
 	if cfg.Broker.GRPCAddress == "" {
@@ -181,6 +209,29 @@ func Load(path string) (Config, error) {
 		cfg.Observability.LogFormat = logFormat
 	default:
 		return Config{}, fmt.Errorf("invalid observability.log_format %q (must be json, text)", cfg.Observability.LogFormat)
+	}
+
+	// Retention validations
+	maxAge, err := time.ParseDuration(cfg.Retention.DefaultMaxAgeStr)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid retention.max_age %q: %w", cfg.Retention.DefaultMaxAgeStr, err)
+	}
+	if maxAge <= 0 {
+		return Config{}, fmt.Errorf("retention.max_age must be positive, got %v", maxAge)
+	}
+	cfg.Retention.DefaultMaxAge = maxAge
+
+	checkInterval, err := time.ParseDuration(cfg.Retention.CheckIntervalStr)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid retention.check_interval %q: %w", cfg.Retention.CheckIntervalStr, err)
+	}
+	if checkInterval <= 0 {
+		return Config{}, fmt.Errorf("retention.check_interval must be positive, got %v", checkInterval)
+	}
+	cfg.Retention.CheckInterval = checkInterval
+
+	if cfg.Retention.DefaultMaxPartitionBytes <= 0 {
+		return Config{}, fmt.Errorf("retention.max_partition_bytes must be positive, got %d", cfg.Retention.DefaultMaxPartitionBytes)
 	}
 
 	return cfg, nil
